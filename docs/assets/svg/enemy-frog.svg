@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Green frog enemy - retro arcade style -->
+  <!-- Shadow -->
+  <ellipse cx="24" cy="44" rx="14" ry="3" fill="#00000033"/>
+  <!-- Back legs -->
+  <ellipse cx="10" cy="40" rx="6" ry="4" fill="#33AA33" stroke="#222222" stroke-width="1.5"/>
+  <ellipse cx="38" cy="40" rx="6" ry="4" fill="#33AA33" stroke="#222222" stroke-width="1.5"/>
+  <!-- Body -->
+  <ellipse cx="24" cy="32" rx="16" ry="12" fill="#44CC44" stroke="#222222" stroke-width="2"/>
+  <!-- Belly -->
+  <ellipse cx="24" cy="35" rx="10" ry="7" fill="#88EE88"/>
+  <!-- Eye bumps -->
+  <circle cx="16" cy="18" r="7" fill="#44CC44" stroke="#222222" stroke-width="2"/>
+  <circle cx="32" cy="18" r="7" fill="#44CC44" stroke="#222222" stroke-width="2"/>
+  <!-- Eye whites -->
+  <circle cx="16" cy="17" r="5" fill="#FFFFFF"/>
+  <circle cx="32" cy="17" r="5" fill="#FFFFFF"/>
+  <!-- Pupils -->
+  <circle cx="17" cy="17" r="2.5" fill="#222222"/>
+  <circle cx="33" cy="17" r="2.5" fill="#222222"/>
+  <!-- Eye highlights -->
+  <circle cx="15.5" cy="15.5" r="1.2" fill="#FFFFFF"/>
+  <circle cx="31.5" cy="15.5" r="1.2" fill="#FFFFFF"/>
+  <!-- Mouth -->
+  <path d="M14 32 Q24 38 34 32" fill="none" stroke="#226622" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Front feet -->
+  <ellipse cx="12" cy="42" rx="4" ry="2.5" fill="#44CC44" stroke="#222222" stroke-width="1"/>
+  <ellipse cx="36" cy="42" rx="4" ry="2.5" fill="#44CC44" stroke="#222222" stroke-width="1"/>
+  <!-- Toe lines -->
+  <line x1="10" y1="42" x2="9" y2="44" stroke="#226622" stroke-width="0.8"/>
+  <line x1="12" y1="42" x2="12" y2="44.5" stroke="#226622" stroke-width="0.8"/>
+  <line x1="14" y1="42" x2="15" y2="44" stroke="#226622" stroke-width="0.8"/>
+  <line x1="34" y1="42" x2="33" y2="44" stroke="#226622" stroke-width="0.8"/>
+  <line x1="36" y1="42" x2="36" y2="44.5" stroke="#226622" stroke-width="0.8"/>
+  <line x1="38" y1="42" x2="39" y2="44" stroke="#226622" stroke-width="0.8"/>
+  <!-- Spots -->
+  <circle cx="18" cy="28" r="2" fill="#33AA33" opacity="0.6"/>
+  <circle cx="30" cy="30" r="1.5" fill="#33AA33" opacity="0.6"/>
+</svg>
