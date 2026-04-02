@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brick Push Game - Direct Run</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            text-align: center;
+            background: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <div class="message">
+        <h2>游戏运行说明</h2>
+        <p>要正常运行此游戏，请更新Node.js到v18或更高版本：</p>
+        <pre style="text-align: left; margin: 15px 0; padding: 10px; background: #333; border-radius: 5px;">
+# 使用Homebrew更新
+brew update
+brew upgrade node
+
+# 或者使用nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+source ~/.zshrc
+nvm install 20.19.0
+nvm use 20.19.0</pre>
+        <p>更新后，在项目目录运行：</p>
+        <pre style="text-align: left; margin: 15px 0; padding: 10px; background: #333; border-radius: 5px;">
+npm install
+npm run dev</pre>
+        <p>当前Node版本：<span id="node-version">检查中...</span></p>
+    </div>
+    
+    <script>
+        // 检查Node版本
+        fetch('/package.json')
+            .then(response => response.json())
+            .then(packageJson => {
+                const engines = packageJson.engines;
+                const currentVersion = 'v14.19.3';
+                const requiredVersion = engines?.node || '^18.0.0';
+                
+                document.getElementById('node-version').textContent = 
+                    `${currentVersion} (需要: ${requiredVersion})`;
+            })
+            .catch(() => {
+                document.getElementById('node-version').textContent = 'v14.19.3 (需要更新)';
+            });
+    </script>
+</body>
+</html>

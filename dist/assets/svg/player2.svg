@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Retro pixel-art squirrel character -->
+  <!-- Shadow -->
+  <ellipse cx="24" cy="44" rx="12" ry="3" fill="#00000033"/>
+  <!-- Fluffy tail -->
+  <path d="M36 32 Q44 24 40 14 Q36 6 32 12 Q28 18 34 28 Z" fill="#CC7733" stroke="#222222" stroke-width="2"/>
+  <path d="M37 30 Q42 24 39 16 Q36 10 34 15 Q31 20 35 27 Z" fill="#DD9944"/>
+  <!-- Ears -->
+  <path d="M15 12 L12 4 L19 10 Z" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <path d="M33 12 L36 4 L29 10 Z" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <!-- Ear tufts -->
+  <path d="M14 10 L13 6 L17 9 Z" fill="#DD9944"/>
+  <path d="M34 10 L35 6 L31 9 Z" fill="#DD9944"/>
+  <!-- Body -->
+  <ellipse cx="24" cy="30" rx="13" ry="14" fill="#CC7733" stroke="#222222" stroke-width="2"/>
+  <!-- Belly -->
+  <ellipse cx="24" cy="33" rx="8" ry="9" fill="#EEBB77"/>
+  <!-- Eyes -->
+  <circle cx="19" cy="25" r="3" fill="#FFFFFF" stroke="#222222" stroke-width="1"/>
+  <circle cx="29" cy="25" r="3" fill="#FFFFFF" stroke="#222222" stroke-width="1"/>
+  <circle cx="19" cy="25" r="1.5" fill="#222222"/>
+  <circle cx="29" cy="25" r="1.5" fill="#222222"/>
+  <!-- Eye highlights -->
+  <circle cx="20" cy="24" r="0.8" fill="#FFFFFF"/>
+  <circle cx="30" cy="24" r="0.8" fill="#FFFFFF"/>
+  <!-- Nose -->
+  <circle cx="24" cy="29" r="2" fill="#553322"/>
+  <!-- Mouth -->
+  <path d="M22 31 Q24 33 26 31" fill="none" stroke="#222222" stroke-width="1" stroke-linecap="round"/>
+  <!-- Arms -->
+  <ellipse cx="11" cy="30" rx="3" ry="5" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <ellipse cx="37" cy="30" rx="3" ry="5" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <!-- Paws -->
+  <ellipse cx="11" cy="34" rx="2.5" ry="2" fill="#EEBB77" stroke="#222222" stroke-width="1"/>
+  <ellipse cx="37" cy="34" rx="2.5" ry="2" fill="#EEBB77" stroke="#222222" stroke-width="1"/>
+  <!-- Feet -->
+  <ellipse cx="18" cy="42" rx="5" ry="3" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <ellipse cx="30" cy="42" rx="5" ry="3" fill="#CC7733" stroke="#222222" stroke-width="1.5"/>
+  <!-- Cheeks -->
+  <circle cx="15" cy="30" r="2" fill="#FFAA66" opacity="0.5"/>
+  <circle cx="33" cy="30" r="2" fill="#FFAA66" opacity="0.5"/>
+</svg>

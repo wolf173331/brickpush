@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Special star block - yellow frame with star center -->
+  <!-- Dark outline -->
+  <rect x="1" y="1" width="46" height="46" rx="2" fill="#222222"/>
+  <!-- Yellow frame/border -->
+  <rect x="2" y="2" width="44" height="44" rx="2" fill="#FFD700"/>
+  <!-- Frame bevel highlight -->
+  <path d="M4 4 L44 4 L42 6 L6 6 Z" fill="#FFE84D" opacity="0.8"/>
+  <path d="M4 4 L6 6 L6 42 L4 44 Z" fill="#FFE033" opacity="0.6"/>
+  <!-- Frame bevel shadow -->
+  <path d="M4 44 L6 42 L42 42 L44 44 Z" fill="#CCA800" opacity="0.8"/>
+  <path d="M44 4 L44 44 L42 42 L42 6 Z" fill="#BB9900" opacity="0.8"/>
+  <!-- Inner teal block -->
+  <rect x="6" y="6" width="36" height="36" rx="1" fill="#44BBAA"/>
+  <!-- Star shape -->
+  <polygon points="24,10 27.5,18 36,19 30,25 31.5,34 24,30 16.5,34 18,25 12,19 20.5,18"
+           fill="#FFD700" stroke="#CC9900" stroke-width="1"/>
+  <!-- Star highlight -->
+  <polygon points="24,13 26.5,19 24,17 21.5,19" fill="#FFE84D" opacity="0.6"/>
+</svg>

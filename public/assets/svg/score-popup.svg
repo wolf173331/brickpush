@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32" viewBox="0 0 64 32">
+  <!-- Score popup background - semi-transparent dark panel -->
+  <!-- Outer glow -->
+  <rect x="1" y="1" width="62" height="30" rx="6" fill="#000000" opacity="0.2"/>
+  <!-- Main panel -->
+  <rect x="2" y="2" width="60" height="28" rx="5" fill="#111122" opacity="0.75"/>
+  <!-- Border highlight (top-left) -->
+  <path d="M7 2 L57 2 Q62 2 62 7" fill="none" stroke="#4488FF" stroke-width="1" opacity="0.5"/>
+  <path d="M2 7 L2 25 Q2 30 7 30" fill="none" stroke="#4488FF" stroke-width="1" opacity="0.3"/>
+  <!-- Border shadow (bottom-right) -->
+  <path d="M57 30 L7 30 Q2 30 2 25" fill="none" stroke="#222244" stroke-width="1" opacity="0.5"/>
+  <path d="M62 25 L62 7 Q62 2 57 2" fill="none" stroke="#222244" stroke-width="1" opacity="0.3"/>
+  <!-- Inner highlight line -->
+  <line x1="8" y1="4" x2="56" y2="4" stroke="#6699FF" stroke-width="0.5" opacity="0.3"/>
+  <!-- Subtle corner accents -->
+  <rect x="4" y="4" width="3" height="1" rx="0.5" fill="#4488FF" opacity="0.4"/>
+  <rect x="4" y="4" width="1" height="3" rx="0.5" fill="#4488FF" opacity="0.4"/>
+  <rect x="57" y="4" width="3" height="1" rx="0.5" fill="#4488FF" opacity="0.3"/>
+  <rect x="59" y="4" width="1" height="3" rx="0.5" fill="#4488FF" opacity="0.3"/>
+  <rect x="4" y="27" width="3" height="1" rx="0.5" fill="#4488FF" opacity="0.2"/>
+  <rect x="4" y="25" width="1" height="3" rx="0.5" fill="#4488FF" opacity="0.2"/>
+  <rect x="57" y="27" width="3" height="1" rx="0.5" fill="#4488FF" opacity="0.2"/>
+  <rect x="59" y="25" width="1" height="3" rx="0.5" fill="#4488FF" opacity="0.2"/>
+</svg>

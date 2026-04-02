@@ -1,0 +1,14 @@
+{
+  "tasks": [
+    {
+      "task_id": "69ccbf821220012d251531b2",
+      "status": "completed",
+      "prompt": "A retro pixel art arcade game icon for a cooperative block-pushing puzzle game. Features a cute rabbit and squirrel character pushing colorful teal blocks on a stone grid floor. Retro 8-bit arcade style with bold colors, dark background, pixel art aesthetic. Title text BLOCK CRUSH in arcade font.",
+      "created_at": "2026-04-01T07:00:00Z",
+      "output_filename": "icon",
+      "result": {
+        "image_urls": ["https://soon-prod-bucket.tos-cn-shanghai.volces.com/69c37b289549fd7fb91dc472/logo_v2_final/20260401/72ded7de-afd1-4adb-a3c9-78fa357f8871/782379ed-b652-4f21-9fd0-01667b38804f.png"]
+      }
+    }
+  ]
+}
