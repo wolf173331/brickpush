@@ -1,7 +1,7 @@
 import { Scene, EntityBuilder, UIEntityBuilder, globalTheme, UITextComponent, UI_TEXT_COMPONENT } from 'agent-gamedev';
 import type { EntityId, IWorld, SceneTransitionData } from 'agent-gamedev';
 import { GAME_WIDTH, GAME_HEIGHT, PALETTE } from '../constants';
-import { type LeaderboardEntry, loadLeaderboard, loadLeaderboardShared, LEADERBOARD_MAX_ENTRIES } from '../gameProgress';
+import { type LeaderboardEntry, loadLeaderboard, LEADERBOARD_MAX_ENTRIES } from '../gameProgress';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
@@ -140,7 +140,7 @@ export class LeaderboardScene extends Scene {
   }
 
   private async refreshLeaderboard(world: IWorld): Promise<void> {
-    const entries = await loadLeaderboardShared();
+    const entries = loadLeaderboard(); // 直接使用本地存储
     if (this.leaderboardLeftEntity !== null) {
       const leftText = world.getComponent<UITextComponent>(this.leaderboardLeftEntity, UI_TEXT_COMPONENT);
       leftText?.setText(this.formatLeaderboardColumn(entries, 0));

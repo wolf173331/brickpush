@@ -6,7 +6,6 @@ import {
   LEADERBOARD_MAX_ENTRIES,
   getRunScore,
   loadLeaderboard,
-  loadLeaderboardShared,
   sanitizeLeaderboardName,
   saveLeaderboardEntryShared,
 } from '../gameProgress';
@@ -145,7 +144,7 @@ export class GameOverScene extends Scene {
   }
 
   private async refreshLeaderboard(world: IWorld): Promise<void> {
-    const entries = await loadLeaderboardShared();
+    const entries = loadLeaderboard(); // 直接使用本地存储
     if (this.leaderboardEntity === null) return;
     const uiText = world.getComponent<UITextComponent>(this.leaderboardEntity, UI_TEXT_COMPONENT);
     uiText?.setText(this.formatLeaderboardText(entries));

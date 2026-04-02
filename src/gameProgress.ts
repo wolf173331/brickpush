@@ -10,7 +10,8 @@ const MAX_LEADERBOARD_ENTRIES = 20;
 
 export const LEADERBOARD_MAX_ENTRIES = MAX_LEADERBOARD_ENTRIES;
 const DEFAULT_RUN_HP = 3;
-const LEADERBOARD_API = '/api/leaderboard';
+// GitHub Pages是静态托管，不使用服务器API
+// const LEADERBOARD_API = '/api/leaderboard';
 
 let currentRunScore = 0;
 let currentRunHp = DEFAULT_RUN_HP;
@@ -89,45 +90,29 @@ export function saveLeaderboardEntry(name: string, score: number, levelName: str
   return nextEntries;
 }
 
-function normalizeLeaderboardEntries(entries: unknown): LeaderboardEntry[] {
-  if (!Array.isArray(entries)) return [];
-
-  return entries
-    .filter(
-      (entry) =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        typeof (entry as LeaderboardEntry).name === 'string' &&
-        typeof (entry as LeaderboardEntry).score === 'number' &&
-        typeof (entry as LeaderboardEntry).levelName === 'string' &&
-        typeof (entry as LeaderboardEntry).timestamp === 'number'
-    )
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.timestamp - b.timestamp;
-    })
-    .slice(0, MAX_LEADERBOARD_ENTRIES);
-}
+// function normalizeLeaderboardEntries(entries: unknown): LeaderboardEntry[] {
+//   if (!Array.isArray(entries)) return [];
+// 
+//   return entries
+//     .filter(
+//       (entry) =>
+//         typeof entry === 'object' &&
+//         entry !== null &&
+//         typeof (entry as LeaderboardEntry).name === 'string' &&
+//         typeof (entry as LeaderboardEntry).score === 'number' &&
+//         typeof (entry as LeaderboardEntry).levelName === 'string' &&
+//         typeof (entry as LeaderboardEntry).timestamp === 'number'
+//     )
+//     .sort((a, b) => {
+//       if (b.score !== a.score) return b.score - a.score;
+//       return a.timestamp - b.timestamp;
+//     })
+//     .slice(0, MAX_LEADERBOARD_ENTRIES);
+// }
 
 export async function loadLeaderboardShared(): Promise<LeaderboardEntry[]> {
-  if (typeof window === 'undefined' || typeof fetch !== 'function') {
-    return loadLeaderboard();
-  }
-
-  try {
-    const response = await fetch(LEADERBOARD_API, { method: 'GET' });
-    if (!response.ok) {
-      throw new Error(`Leaderboard request failed: ${response.status}`);
-    }
-
-    const data = normalizeLeaderboardEntries(await response.json());
-    if (window.localStorage) {
-      window.localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(data));
-    }
-    return data;
-  } catch {
-    return loadLeaderboard();
-  }
+  // GitHub Pages是静态托管，直接使用本地存储
+  return loadLeaderboard();
 }
 
 export async function saveLeaderboardEntryShared(
@@ -140,31 +125,6 @@ export async function saveLeaderboardEntryShared(
     return loadLeaderboardShared();
   }
 
-  if (typeof window === 'undefined' || typeof fetch !== 'function') {
-    return saveLeaderboardEntry(safeName, score, levelName);
-  }
-
-  try {
-    const response = await fetch(LEADERBOARD_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: safeName,
-        score: Math.max(0, Math.floor(score)),
-        levelName,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Leaderboard save failed: ${response.status}`);
-    }
-
-    const data = normalizeLeaderboardEntries(await response.json());
-    if (window.localStorage) {
-      window.localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(data));
-    }
-    return data;
-  } catch {
-    return saveLeaderboardEntry(safeName, score, levelName);
-  }
+  // GitHub Pages是静态托管，直接使用本地存储
+  return saveLeaderboardEntry(safeName, score, levelName);
 }
