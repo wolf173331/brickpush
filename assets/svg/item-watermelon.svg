@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Watermelon slice reward -->
+  <!-- Slice shape (half circle) -->
+  <path d="M4 22 A14 14 0 0 1 28 22 Z" fill="#44AA44" stroke="#222222" stroke-width="1.5"/>
+  <!-- Green rind inner -->
+  <path d="M6 22 A12 12 0 0 1 26 22 Z" fill="#66CC66"/>
+  <!-- White rind -->
+  <path d="M7 22 A11 11 0 0 1 25 22 Z" fill="#EEFFEE"/>
+  <!-- Red flesh -->
+  <path d="M8 22 A10 10 0 0 1 24 22 Z" fill="#FF4444"/>
+  <!-- Flesh highlight -->
+  <path d="M10 22 A8 8 0 0 1 22 22 Z" fill="#FF5555" opacity="0.5"/>
+  <!-- Seeds -->
+  <ellipse cx="12" cy="19" rx="1" ry="1.5" fill="#222222" transform="rotate(-15 12 19)"/>
+  <ellipse cx="16" cy="17" rx="1" ry="1.5" fill="#222222"/>
+  <ellipse cx="20" cy="19" rx="1" ry="1.5" fill="#222222" transform="rotate(15 20 19)"/>
+  <ellipse cx="14" cy="14" rx="0.8" ry="1.2" fill="#222222" transform="rotate(-10 14 14)"/>
+  <ellipse cx="18" cy="14" rx="0.8" ry="1.2" fill="#222222" transform="rotate(10 18 14)"/>
+  <!-- Shine -->
+  <path d="M11 16 Q13 12 16 11" fill="none" stroke="#FF8888" stroke-width="0.8" opacity="0.5"/>
+</svg>
