@@ -35,8 +35,8 @@ export const PLAYER_PUSH_DISTANCE = 1; // 默认推动距离（格数）
 export const PLAYER_MAX_PUSH_DISTANCE = 10; // 最大推动距离
 
 // ---- Enemy ----
-export const ENEMY_MOVE_INTERVAL_MIN = 0.18;
-export const ENEMY_MOVE_INTERVAL_MAX = 0.35;
+export const ENEMY_MOVE_INTERVAL_MIN = 0.35;
+export const ENEMY_MOVE_INTERVAL_MAX = 0.65;
 
 export const ENEMY_TYPE_FROG = 0;
 export const ENEMY_TYPE_BLOB = 1;

@@ -1,7 +1,7 @@
 import { Scene, EntityBuilder, UIEntityBuilder, globalTheme, UITextComponent, UI_TEXT_COMPONENT } from 'agent-gamedev';
 import type { EntityId, IWorld, SceneTransitionData } from 'agent-gamedev';
 import { GAME_WIDTH, GAME_HEIGHT, PALETTE } from '../constants';
-import { type LeaderboardEntry, loadLeaderboard, loadLeaderboardShared, clearAllLeaderboards, LEADERBOARD_MAX_ENTRIES } from '../gameProgress';
+import { type LeaderboardEntry, loadLeaderboard, loadLeaderboardShared, LEADERBOARD_MAX_ENTRIES } from '../gameProgress';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
@@ -74,7 +74,7 @@ export class LeaderboardScene extends Scene {
     this.trackEntity(leaderboardRightEntity);
     this.leaderboardRightEntity = leaderboardRightEntity;
 
-    // 返回按钮 — 留出足够间距
+    // 返回按钮
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: 230, width: 260, height: 52 })
@@ -82,52 +82,11 @@ export class LeaderboardScene extends Scene {
         .build()
     );
 
-    // 清空提示
-    this.trackEntity(
-      UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: 295, width: 400, height: 24 })
-        .withText({ text: '长按 C 键 2 秒清空排行榜', fontSize: 12, color: 0x444466, align: 'center' })
-        .build()
-    );
-
     void this.refreshLeaderboard(world);
-
-    // 清空排行榜快捷键：按住 C 键 3 秒
-    this.setupClearShortcut(world);
   }
-
-  private clearHandler: ((e: KeyboardEvent) => void) | null = null;
-  private clearTimer: ReturnType<typeof setTimeout> | null = null;
-
-  private setupClearShortcut(world: IWorld): void {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'c') return;
-      if (this.clearTimer) return;
-      this.clearTimer = setTimeout(async () => {
-        if (confirm('确认清空所有排行榜数据？此操作不可撤销。')) {
-          await clearAllLeaderboards();
-          await this.refreshLeaderboard(world);
-          alert('排行榜已清空');
-        }
-        this.clearTimer = null;
-      }, 2000); // 按住 2 秒触发
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'c') return;
-      if (this.clearTimer) { clearTimeout(this.clearTimer); this.clearTimer = null; }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    this.clearHandler = onKeyDown;
-    this._clearUpHandler = onKeyUp;
-  }
-
-  private _clearUpHandler: ((e: KeyboardEvent) => void) | null = null;
 
   override onExit(_world: IWorld): void {
-    if (this.clearHandler) { window.removeEventListener('keydown', this.clearHandler); this.clearHandler = null; }
-    if (this._clearUpHandler) { window.removeEventListener('keyup', this._clearUpHandler); this._clearUpHandler = null; }
-    if (this.clearTimer) { clearTimeout(this.clearTimer); this.clearTimer = null; }
+    // 清理工作由父类处理
   }
 
   private formatColumn(entries: LeaderboardEntry[], startIndex: number): string {

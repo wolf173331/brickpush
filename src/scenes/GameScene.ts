@@ -746,10 +746,13 @@ export class GameScene extends Scene {
         .build()
     );
 
-    // 左：HP
+    // 左：HP（用实际 HP 初始化，避免进入下一关时显示错误）
+    const initHp = this.player?.hp ?? getRunHp();
+    const initHearts = '♥'.repeat(Math.max(0, initHp));
+    const initEmpty  = '♡'.repeat(Math.max(0, PLAYER_MAX_HP - initHp));
     this.hpEntity = UIEntityBuilder.create(world, W, H)
       .withUITransform({ anchor: 'top-left', x: HUD_PADDING_X, y: 6, width: 160, height: 36 })
-      .withText({ text: 'HP: ♥♥♥', fontSize: 22, color: 0xff6666, align: 'left' })
+      .withText({ text: `HP: ${initHearts}${initEmpty}`, fontSize: 22, color: 0xff6666, align: 'left' })
       .build();
     this.trackEntity(this.hpEntity);
 
@@ -876,7 +879,7 @@ export class GameScene extends Scene {
             score,
             victoryType: this.victoryType,
             levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
-            canSubmitScore: this.currentLevelIndex >= LEVELS.length - 1,
+            canSubmitScore: this.victoryType === 'hearts',
           });
         }
       }
