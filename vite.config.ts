@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/brickpush/',
+  // GitHub Pages 用 /brickpush/，COS/其他根目录部署用 /
+  base: process.env.VITE_BASE_PATH ?? '/brickpush/',
   server: {
     port: 3000,
     open: true,
@@ -12,6 +13,5 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: true,
   },
-  // 让 src/constants 目录下的 JSON 可以通过 fetch 直接访问
   publicDir: 'public',
 });
