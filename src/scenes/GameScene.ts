@@ -879,7 +879,7 @@ export class GameScene extends Scene {
             score,
             victoryType: this.victoryType,
             levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
-            canSubmitScore: this.victoryType === 'hearts',
+            canSubmitScore: score > 0,
           });
         }
       }
@@ -2150,7 +2150,7 @@ export class GameScene extends Scene {
         score,
         victoryType: 'defeat',
         levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
-        canSubmitScore: false,
+        canSubmitScore: score > 0,
       });
     }, 1500);
   }

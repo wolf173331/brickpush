@@ -102,8 +102,8 @@ export class GameOverScene extends Scene {
 
     void this.refreshLeaderboard(world);
 
-    // 只有胜利且分数大于0才能提交
-    if (isVictory && canSubmitScore && score > 0) {
+    // 分数大于0就可以提交
+    if (canSubmitScore && score > 0) {
       this.mountLeaderboardForm(world, score, levelName);
     }
 
