@@ -133,13 +133,13 @@ export class GameOverScene extends Scene {
 
   private formatLeaderboardText(entries: LeaderboardEntry[]): string {
     if (entries.length === 0) {
-      return '排行榜\\n暂无记录';
+      return '排行榜\n暂无记录';
     }
 
     return [
       `排行榜 TOP ${LEADERBOARD_MAX_ENTRIES}`,
       ...entries.slice(0, 10).map((entry, index) => `${`${index + 1}`.padStart(2, '0')} ${entry.name} ${entry.score}`),
-    ].join('\\n');
+    ].join('\n');
   }
 
   private async refreshLeaderboard(world: IWorld): Promise<void> {

@@ -63,6 +63,19 @@ export const SCORE_BLOCK_BREAK = 100;    // 推坏普通方块
 export const SCORE_WALL_BREAK  = 200;    // 推坏墙
 export const SCORE_STAR_BREAK  = 300;    // 推坏星块
 export const SCORE_HEART_MERGE = 5000;
+export const SCORE_TIME_BONUS_MAX = 10000; // 时间奖励最大值（开始就过关）
+
+/** 根据剩余时间计算通关时间奖励，抛物线过渡
+ *  timeLeft: 当前剩余秒数
+ *  totalTime: 该关总时间
+ *  警告阈值以下得0分，满时间得 SCORE_TIME_BONUS_MAX
+ */
+export function calcTimeBonusScore(timeLeft: number, totalTime: number): number {
+  const threshold = TIME_WARNING_THRESHOLD;
+  if (timeLeft <= threshold) return 0;
+  const t = (timeLeft - threshold) / (totalTime - threshold); // 0~1
+  return Math.round(SCORE_TIME_BONUS_MAX * t * t); // 抛物线
+}
 
 // ---- Combo ----
 export const COMBO_WINDOW = 5.0;         // combo 窗口（秒）
@@ -99,6 +112,7 @@ export const HUD_PADDING_X = 20;
 
 // ---- Phase ----
 export const READY_DURATION = 2.0;
+export const ENEMY_SPAWN_ACTIVATE_DELAY = 1.0; // 怪物刷出后延迟激活（秒）
 
 // ---- Z-index layers ----
 export const Z_FLOOR = -10;

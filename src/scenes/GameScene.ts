@@ -61,8 +61,10 @@ import {
   COMBO_BASE_KILL,
   COMBO_INCREMENT,
   COMBO_MAX,
+  calcTimeBonusScore,
   HEARTS_NEEDED_FOR_WIN,
   READY_DURATION,
+  ENEMY_SPAWN_ACTIVATE_DELAY,
   TIME_LIMIT_SECONDS,
   TIME_WARNING_THRESHOLD,
   getLevelTimeLimit,
@@ -118,7 +120,8 @@ interface EnemyState {
   type: number;
   active: boolean;
   moveCooldown: number;
-  stunTimer: number;   // > 0 时随机游荡（撞到玩家后）
+  stunTimer: number;
+  activateTimer: number; // > 0 时等待激活
 }
 
 interface BombState {
@@ -473,7 +476,7 @@ export class GameScene extends Scene {
       this.waveEnemyTypeIndex++;
     }
 
-    this.spawnEnemies(world, types, true); // 直接激活
+    this.spawnEnemies(world, types, false); // 直接激活
 
     // 设置下一波计时器（最后一波不需要）
     if (this.currentWave < this.totalWaves) {
@@ -502,6 +505,7 @@ export class GameScene extends Scene {
         col: spawn.col, row: spawn.row, entity: eid,
         type, active: activate, moveCooldown: getEnemyMoveCooldown(type),
         stunTimer: 0,
+        activateTimer: activate ? 0 : ENEMY_SPAWN_ACTIVATE_DELAY,
       });
     }
   }
@@ -1706,7 +1710,18 @@ export class GameScene extends Scene {
 
   private updateEnemies(world: IWorld, dt: number): void {
     for (const enemy of this.enemies) {
-      if (!enemy.active) continue;
+      // 延迟激活
+      if (!enemy.active) {
+        if (enemy.activateTimer > 0) {
+          enemy.activateTimer -= dt;
+          if (enemy.activateTimer <= 0) {
+            enemy.active = true;
+            const sprite = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
+            if (sprite) sprite.textureId = ENEMY_TEXTURES[enemy.type] ?? ASSETS.ENEMY_FROG;
+          }
+        }
+        continue;
+      }
 
       // stun 计时
       if (enemy.stunTimer > 0) enemy.stunTimer -= dt;
@@ -2176,7 +2191,10 @@ export class GameScene extends Scene {
     if (this.checkHeartsConnected()) {
       this.phase = 'complete';
       this.victoryType = 'hearts';
-      if (this.player) this.player.score += SCORE_HEART_MERGE + levelClearBonus;
+      const totalTime = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
+      const timeBonus = calcTimeBonusScore(this.timeLeft, totalTime);
+      if (this.player) this.player.score += SCORE_HEART_MERGE + levelClearBonus + timeBonus;
+      if (timeBonus > 0) this.spawnScorePopup(world, 7, 5, timeBonus, 0x00ffcc, `⏱ TIME +${timeBonus}`);
       this.syncRunProgress();
       this.completeTimer = 2.5;
       gameAudio.playVictory();
