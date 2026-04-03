@@ -25,7 +25,7 @@ export const CELL_ITEM = 10;
 export const CELL_SAFE = 11;
 
 // ---- Player ----
-export const PLAYER_MOVE_COOLDOWN = 0.18;
+export const PLAYER_MOVE_COOLDOWN = 0.11;
 export const PLAYER_MOVE_TWEEN_DURATION = 0.1;
 export const PLAYER_MAX_HP = 3;
 export const PLAYER_DAMAGE_COOLDOWN = 1.0; // 受伤后无敌时间（秒）
@@ -69,7 +69,7 @@ export const HEART_CONNECTION_REQUIRED = true; // 心心方块必须横竖连接
 
 // ---- Score display ----
 export const SCORE_DISPLAY_X = 20;
-export const SCORE_DISPLAY_Y = 60;
+export const SCORE_DISPLAY_Y = 50;
 
 // ---- Time limit ----
 export const TIME_LIMIT_SECONDS = 99;
@@ -197,7 +197,7 @@ export const ASSETS = {
   BLOCK: 'block',
   STAR_BLOCK: 'star-block',
   HEART_BLOCK: 'heart-block',
-  BOMB_BLOCK: 'bomb-block',
+  BOMB_BLOCK: 'bomb',
   ENEMY_FROG: 'enemy-frog',
   ENEMY_BLUE: 'enemy-blue',
   ENEMY_PINK: 'enemy-pink',

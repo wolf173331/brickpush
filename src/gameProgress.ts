@@ -111,8 +111,23 @@ export function saveLeaderboardEntry(name: string, score: number, levelName: str
 // }
 
 export async function loadLeaderboardShared(): Promise<LeaderboardEntry[]> {
-  // GitHub Pages是静态托管，直接使用本地存储
-  return loadLeaderboard();
+  try {
+    // 尝试使用Supabase在线排行榜
+    const { LeaderboardService } = await import('./supabaseClient')
+    const service = LeaderboardService.getInstance()
+    const entries = await service.getLeaderboard()
+    
+    // 转换为游戏格式
+    return entries.map(entry => ({
+      name: entry.name,
+      score: entry.score,
+      levelName: entry.levelName,
+      timestamp: entry.timestamp
+    }))
+  } catch (error) {
+    console.warn('在线排行榜失败，回退到本地存储:', error)
+    return loadLeaderboard()
+  }
 }
 
 export async function saveLeaderboardEntryShared(
@@ -125,6 +140,21 @@ export async function saveLeaderboardEntryShared(
     return loadLeaderboardShared();
   }
 
-  // GitHub Pages是静态托管，直接使用本地存储
-  return saveLeaderboardEntry(safeName, score, levelName);
+  try {
+    // 尝试使用Supabase在线保存
+    const { LeaderboardService } = await import('./supabaseClient')
+    const service = LeaderboardService.getInstance()
+    const entries = await service.saveScore(safeName, score, levelName)
+    
+    // 转换为游戏格式
+    return entries.map(entry => ({
+      name: entry.name,
+      score: entry.score,
+      levelName: entry.levelName,
+      timestamp: entry.timestamp
+    }))
+  } catch (error) {
+    console.warn('在线保存失败，回退到本地存储:', error)
+    return saveLeaderboardEntry(safeName, score, levelName)
+  }
 }
