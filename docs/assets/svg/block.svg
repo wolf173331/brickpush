@@ -1,22 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!-- Pushable teal/cyan block with bevel -->
-  <!-- Dark outline -->
-  <rect x="1" y="1" width="46" height="46" rx="2" fill="#222222"/>
-  <!-- Block base -->
-  <rect x="2" y="2" width="44" height="44" rx="2" fill="#44BBAA"/>
-  <!-- Top bevel (highlight) -->
-  <path d="M4 4 L44 4 L40 8 L8 8 Z" fill="#66DDCC" opacity="0.8"/>
-  <!-- Left bevel (highlight) -->
-  <path d="M4 4 L8 8 L8 40 L4 44 Z" fill="#55CCBB" opacity="0.6"/>
-  <!-- Bottom bevel (shadow) -->
-  <path d="M4 44 L8 40 L40 40 L44 44 Z" fill="#339988" opacity="0.8"/>
-  <!-- Right bevel (shadow) -->
-  <path d="M44 4 L44 44 L40 40 L40 8 Z" fill="#2D8878" opacity="0.8"/>
-  <!-- Center face -->
-  <rect x="8" y="8" width="32" height="32" rx="1" fill="#44BBAA"/>
-  <!-- Subtle cross detail -->
-  <line x1="24" y1="10" x2="24" y2="38" stroke="#3DAA99" stroke-width="1" opacity="0.5"/>
-  <line x1="10" y1="24" x2="38" y2="24" stroke="#3DAA99" stroke-width="1" opacity="0.5"/>
-  <!-- Top-left shine -->
-  <rect x="10" y="10" width="6" height="6" rx="1" fill="#77EEDD" opacity="0.4"/>
+  <!-- 基础色填满整格，边缘无边框，确保四方无缝拼接 -->
+  <rect x="0" y="0" width="48" height="48" fill="#44BBAA"/>
+  <!-- 顶部高光斜面（从边缘内缩4px开始，不碰边缘） -->
+  <polygon points="0,0 48,0 44,4 4,4" fill="#66DDCC" opacity="0.75"/>
+  <!-- 左侧高光斜面 -->
+  <polygon points="0,0 4,4 4,44 0,48" fill="#55CCBB" opacity="0.55"/>
+  <!-- 底部阴影斜面 -->
+  <polygon points="0,48 4,44 44,44 48,48" fill="#2D9988" opacity="0.75"/>
+  <!-- 右侧阴影斜面 -->
+  <polygon points="48,0 48,48 44,44 44,4" fill="#267A6A" opacity="0.75"/>
+  <!-- 中心平面 -->
+  <rect x="4" y="4" width="40" height="40" fill="#44BBAA"/>
+  <!-- 内部十字纹理（极淡，增加质感） -->
+  <line x1="24" y1="4" x2="24" y2="44" stroke="#3DAA99" stroke-width="1" opacity="0.3"/>
+  <line x1="4" y1="24" x2="44" y2="24" stroke="#3DAA99" stroke-width="1" opacity="0.3"/>
+  <!-- 左上角小高光 -->
+  <rect x="6" y="6" width="8" height="8" rx="1" fill="#88EEDD" opacity="0.3"/>
 </svg>

@@ -6,7 +6,7 @@ import { gameAudio } from './audio';
 
 const SVG_DIR = 'assets/svg';
 const PNG_DIR = 'assets/png';
-const RASTER_TEXTURE_IDS: ReadonlySet<string> = new Set([ASSETS.BLOCK, ASSETS.GRASS, ASSETS.BOMB_BLOCK]);
+const RASTER_TEXTURE_IDS: ReadonlySet<string> = new Set([ASSETS.BOMB_BLOCK]);
 
 export class MyGame extends Game {
   private sceneManager!: SceneManager;

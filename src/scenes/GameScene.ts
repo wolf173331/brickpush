@@ -62,6 +62,7 @@ import {
   READY_DURATION,
   TIME_LIMIT_SECONDS,
   TIME_WARNING_THRESHOLD,
+  getLevelTimeLimit,
   SCORE_DISPLAY_Y,
   Z_FLOOR,
   Z_WALL,
@@ -143,13 +144,13 @@ function getEnemyMoveCooldown(enemyType: number): number {
 
   switch (enemyType) {
     case ENEMY_TYPE_FROG:
-      return base * 1.2;
+      return base * 1.3;
     case ENEMY_TYPE_BLOB:
-      return base * 0.7;
+      return base * 0.5;
     case ENEMY_TYPE_BOW:
-      return base * 0.9;
+      return base * 0.8;
     case ENEMY_TYPE_GEAR:
-      return base * 1.45;
+      return base * 1.55;
     default:
       return base;
   }
@@ -176,7 +177,6 @@ export class GameScene extends Scene {
   private player: PlayerState | null = null;
   private enemies: EnemyState[] = [];
   private bombs: BombState[] = [];
-  private initialEnemyCount = 0;
 
   // ---- HUD entity references ----
   private enemyCountEntity: EntityId = 0;
@@ -216,6 +216,7 @@ export class GameScene extends Scene {
     this.currentLevelIndex = getCurrentLevelIndex();
 
     this.resetState();
+    this.timeLeft = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
     this.registerNextLevelHandler(world);
     this.parseLevel();
     this.createFloor(world);
@@ -248,7 +249,6 @@ export class GameScene extends Scene {
     this.player = null;
     this.enemies = [];
     this.bombs = [];
-    this.initialEnemyCount = 0;
     this.phase = 'ready';
     this.readyTimer = READY_DURATION;
     this.completeTimer = 0;
@@ -467,7 +467,6 @@ export class GameScene extends Scene {
     }
 
     this.spawnEnemies(world, pendingEnemyTypes);
-    this.initialEnemyCount = this.enemies.length;
   }
 
   private spawnEnemies(world: IWorld, enemyTypes: number[]): void {
@@ -635,7 +634,7 @@ export class GameScene extends Scene {
   private countTrappedEnemySpawns(spawns: Array<{ col: number; row: number }>): number {
     return spawns.reduce((total, spawn) => {
       const occupied = spawns.filter((other) => other !== spawn);
-      return total + (this.countEnemySpawnExits(occupied, spawn.col, spawn.row) <= 1 ? 1 : 0);
+      return total + (this.countEnemySpawnExits(occupied, spawn.col, spawn.row) <= 2 ? 1 : 0);
     }, 0);
   }
 
@@ -779,14 +778,15 @@ export class GameScene extends Scene {
       .build();
     this.trackEntity(this.levelDisplayEntity);
 
-    // Time display (右上角下方)
+    // Time display — 顶部居中，大字显示
+    const initTime = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
     this.timeDisplayEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-right', x: -HUD_PADDING_X, y: 36, width: 200, height: 30 })
+      .withUITransform({ anchor: 'top-center', y: 2, width: 160, height: 40 })
       .withText({
-        text: `时间: ${TIME_LIMIT_SECONDS}`,
-        fontSize: 16,
+        text: `⏱ ${initTime}`,
+        fontSize: 28,
         color: PALETTE.SCORE_CYAN,
-        align: 'right',
+        align: 'center',
       })
       .build();
     this.trackEntity(this.timeDisplayEntity);
@@ -795,7 +795,7 @@ export class GameScene extends Scene {
     this.heartStatusEntity = UIEntityBuilder.create(world, W, H)
       .withUITransform({ anchor: 'top-right',x: -5, y: SCORE_DISPLAY_Y + 130, width: 105, height: 300 })
       .withText({
-        text: '将♥×3\n连成一线\n或全灭敌人!',
+        text: '将♥×3\n连成一条线!',
         fontSize: 20,
         color: PALETTE.HEART_RED,
         align: 'center',
@@ -883,19 +883,17 @@ export class GameScene extends Scene {
       if (this.completeTimer <= 0 && !this.completionHandled) {
         this.completionHandled = true;
         const hasNextLevel = LEVELS.length > 0 && this.currentLevelIndex < LEVELS.length - 1;
-        if (this.victoryType !== 'none' && hasNextLevel) {
-          this.goToNextLevel(world);
-          return;
+        // 有下一关时，等待玩家点击"下一关"按钮，不自动跳转
+        if (this.victoryType === 'none' || !hasNextLevel) {
+          const score = this.getResolvedScore();
+          setRunScore(score);
+          globalEventBus.emit('scene:gameover', {
+            score,
+            victoryType: this.victoryType,
+            levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
+            canSubmitScore: this.currentLevelIndex >= LEVELS.length - 1,
+          });
         }
-
-        const score = this.getResolvedScore();
-        setRunScore(score);
-        globalEventBus.emit('scene:gameover', {
-          score,
-          victoryType: this.victoryType,
-          levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
-          canSubmitScore: this.currentLevelIndex >= LEVELS.length - 1,
-        });
       }
     }
   }
@@ -1049,7 +1047,7 @@ export class GameScene extends Scene {
   private calculateBombSlidePath(
     startC: number, startR: number,
     dc: number, dr: number,
-  ): { finalC: number; finalR: number; distance: number } {
+  ): { finalC: number; finalR: number; distance: number; hitEnemy: boolean } {
     let finalC = startC;
     let finalR = startR;
     let distance = 0;
@@ -1060,6 +1058,11 @@ export class GameScene extends Scene {
 
       if (!inBounds(testC, testR)) {
         break;
+      }
+
+      // 遇到敌人：炸弹停在敌人位置并爆炸
+      if (this.findEnemyAt(testC, testR)) {
+        return { finalC: testC, finalR: testR, distance: i, hitEnemy: true };
       }
 
       const cell = this.grid[testR][testC];
@@ -1074,7 +1077,7 @@ export class GameScene extends Scene {
       break;
     }
 
-    return { finalC, finalR, distance };
+    return { finalC, finalR, distance, hitEnemy: false };
   }
 
   /** Calculate the final position a block can be pushed to. */
@@ -1209,14 +1212,36 @@ export class GameScene extends Scene {
     dc: number,
     dr: number,
   ): void {
-    const { finalC, finalR, distance } = this.calculateBombSlidePath(bombC, bombR, dc, dr);
+    const { finalC, finalR, distance, hitEnemy } = this.calculateBombSlidePath(bombC, bombR, dc, dr);
 
     if (distance === 0) {
+      // 无处可移动，原地爆炸
       this.explodeSingleBomb(world, p, bombC, bombR);
       p.cooldown = PLAYER_MOVE_COOLDOWN;
       return;
     }
 
+    if (hitEnemy) {
+      // 炸弹滑到敌人位置立即爆炸（不移动炸弹实体，直接在目标格爆炸）
+      this.movePlayerTo(world, p, bombC, bombR);
+      // 先把炸弹逻辑位置移过去再爆炸，确保 explodeSingleBomb 能找到它
+      const bombKey = gridKey(bombC, bombR);
+      const bombEid = this.entityMap.get(bombKey);
+      if (bombEid !== undefined) {
+        this.entityMap.delete(bombKey);
+        this.entityMap.set(gridKey(finalC, finalR), bombEid);
+        const bt = world.getComponent<TransformComponent>(bombEid, TRANSFORM_COMPONENT);
+        if (bt) { const bp = gridToWorld(finalC, finalR); bt.x = bp.x; bt.y = bp.y; }
+      }
+      const bomb = this.bombs.find(b => b.col === bombC && b.row === bombR);
+      if (bomb) { bomb.col = finalC; bomb.row = finalR; }
+      this.grid[bombR][bombC] = CELL_EMPTY;
+      this.grid[finalR][finalC] = CELL_BOMB;
+      this.explodeSingleBomb(world, p, finalC, finalR);
+      return;
+    }
+
+    // 正常滑行到终点，延迟爆炸
     const duration = this.pushBlock(world, bombC, bombR, finalC, finalR, CELL_BOMB);
     this.movePlayerTo(world, p, bombC, bombR);
 
@@ -1674,7 +1699,6 @@ export class GameScene extends Scene {
     for (const enemy of this.enemies) {
       if (!enemy.active) continue;
 
-      // 每帧检查敌人是否与玩家处于同一位置
       if (this.player && this.player.col === enemy.col && this.player.row === enemy.row) {
         this.damagePlayer(world);
       }
@@ -1684,90 +1708,158 @@ export class GameScene extends Scene {
 
       enemy.moveCooldown = getEnemyMoveCooldown(enemy.type);
 
-      const candidateDirections = this.getEnemyMoveDirections(enemy);
-      for (const dir of candidateDirections) {
-        const nc = enemy.col + dir.dc;
-        const nr = enemy.row + dir.dr;
-        if (!inBounds(nc, nr)) continue;
-        if (this.grid[nr][nc] !== CELL_EMPTY) continue;
-        // 检查目标位置是否有其他怪物
-        if (this.findEnemyAt(nc, nr)) continue;
+      if (enemy.type === ENEMY_TYPE_BOW) {
+        this.stepEnemyBow(world, enemy);
+      } else if (enemy.type === ENEMY_TYPE_GEAR) {
+        this.stepEnemyGear(world, enemy);
+      } else {
+        // FROG: random, BLOB: chase player
+        this.stepEnemyBasic(world, enemy);
+      }
+    }
+  }
 
-        // 立即更新逻辑状态
-        this.grid[enemy.row][enemy.col] = CELL_EMPTY;
-        enemy.col = nc;
-        enemy.row = nr;
+  /** 移动敌人到目标格，更新逻辑状态和视觉 */
+  private moveEnemyTo(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
+    this.grid[enemy.row][enemy.col] = CELL_EMPTY;
+    enemy.col = nc;
+    enemy.row = nr;
 
-        // 动画表现：移动实体到新位置
-        const target = gridToWorld(nc, nr);
-        const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
-        if (transform) {
-          // 立即设置最终位置
-          transform.x = target.x;
-          transform.y = target.y;
+    const target = gridToWorld(nc, nr);
+    const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+    if (transform) {
+      transform.x = target.x;
+      transform.y = target.y;
+      globalTweens.to(transform, { scaleX: 1.1, scaleY: 1.1 }, {
+        duration: PLAYER_MOVE_TWEEN_DURATION,
+        easing: Easing.easeOutQuad,
+        yoyo: true,
+        repeat: 1,
+        onComplete: () => { transform.scaleX = 1.0; transform.scaleY = 1.0; },
+      });
+    }
 
-          // 添加轻微的缩放效果作为视觉反馈
-          // 轻微缩放效果
-          globalTweens.to(transform, { scaleX: 1.1, scaleY: 1.1 }, {
-            duration: PLAYER_MOVE_TWEEN_DURATION,
-            easing: Easing.easeOutQuad,
-            yoyo: true,
-            repeat: 1,
-            onComplete: () => {
-              // 确保恢复原状
-              transform.scaleX = 1.0;
-              transform.scaleY = 1.0;
-            }
-          });
+    if (this.player && this.player.col === nc && this.player.row === nr) {
+      this.damagePlayer(world);
+    }
+  }
+
+  /** FROG: 随机移动；BLOB: 追玩家（曼哈顿最近） */
+  private stepEnemyBasic(world: IWorld, enemy: EnemyState): void {
+    const dirs = this.getEnemyMoveDirections(enemy);
+    for (const dir of dirs) {
+      const nc = enemy.col + dir.dc;
+      const nr = enemy.row + dir.dr;
+      if (!inBounds(nc, nr)) continue;
+      if (this.grid[nr][nc] !== CELL_EMPTY) continue;
+      if (this.findEnemyAt(nc, nr)) continue;
+      this.moveEnemyTo(world, enemy, nc, nr);
+      break;
+    }
+  }
+
+  /** BOW: 优先追玩家，若正前方是方块则跳过它落到方块后面的空格 */
+  private stepEnemyBow(world: IWorld, enemy: EnemyState): void {
+    if (!this.player) { this.stepEnemyBasic(world, enemy); return; }
+
+    // 按距离玩家由近到远排序方向
+    const dirs = [...ALL_DIRECTIONS].sort((a, b) => {
+      const da = Math.abs(this.player!.col - (enemy.col + a.dc)) + Math.abs(this.player!.row - (enemy.row + a.dr));
+      const db = Math.abs(this.player!.col - (enemy.col + b.dc)) + Math.abs(this.player!.row - (enemy.row + b.dr));
+      return da - db;
+    });
+
+    for (const dir of dirs) {
+      const nc = enemy.col + dir.dc;
+      const nr = enemy.row + dir.dr;
+      if (!inBounds(nc, nr)) continue;
+
+      const cell = this.grid[nr][nc];
+
+      // 正常空格直接走
+      if (cell === CELL_EMPTY && !this.findEnemyAt(nc, nr)) {
+        this.moveEnemyTo(world, enemy, nc, nr);
+        return;
+      }
+
+      // 前方是可推方块 → 尝试跳到方块后面的空格
+      const isBlock = cell === CELL_BLOCK || cell === CELL_STAR_BLOCK ||
+                      cell === CELL_HEART_BLOCK || cell === CELL_BOMB;
+      if (isBlock) {
+        const jc = nc + dir.dc;
+        const jr = nr + dir.dr;
+        if (inBounds(jc, jr) && this.grid[jr][jc] === CELL_EMPTY && !this.findEnemyAt(jc, jr)) {
+          this.moveEnemyTo(world, enemy, jc, jr);
+          return;
         }
+      }
+    }
+  }
 
-        // Check if enemy moved onto player position
-        if (this.player && this.player.col === nc && this.player.row === nr) {
-          this.damagePlayer(world);
+  /** GEAR: 追玩家，若正前方是方块则推动它（方块滑到下一个空格） */
+  private stepEnemyGear(world: IWorld, enemy: EnemyState): void {
+    if (!this.player) { this.stepEnemyBasic(world, enemy); return; }
+
+    const dc = this.player.col - enemy.col;
+    const dr = this.player.row - enemy.row;
+    // 主轴优先，再备用方向
+    const primaryDirs = (Math.abs(dc) >= Math.abs(dr)
+      ? [{ dc: Math.sign(dc), dr: 0 }, { dc: 0, dr: Math.sign(dr) }]
+      : [{ dc: 0, dr: Math.sign(dr) }, { dc: Math.sign(dc), dr: 0 }]
+    ).filter(d => d.dc !== 0 || d.dr !== 0);
+    const fallbackDirs = ALL_DIRECTIONS.filter(d => !primaryDirs.some(p => p.dc === d.dc && p.dr === d.dr));
+    const dirs = [...primaryDirs, ...fallbackDirs];
+
+    for (const dir of dirs) {
+      const nc = enemy.col + dir.dc;
+      const nr = enemy.row + dir.dr;
+      if (!inBounds(nc, nr)) continue;
+
+      const cell = this.grid[nr][nc];
+
+      // 空格直接走
+      if (cell === CELL_EMPTY && !this.findEnemyAt(nc, nr)) {
+        this.moveEnemyTo(world, enemy, nc, nr);
+        return;
+      }
+
+      // 前方是可推方块 → 只推一格，且不能推普通 BLOCK
+      const isGearPushable = cell === CELL_STAR_BLOCK || cell === CELL_HEART_BLOCK;
+      if (isGearPushable) {
+        const bc = nc + dir.dc;
+        const br = nr + dir.dr;
+        // 目标格必须是空格且没有敌人
+        if (!inBounds(bc, br) || this.grid[br][bc] !== CELL_EMPTY || this.findEnemyAt(bc, br)) continue;
+
+        // 移动方块实体一格
+        const blockKey = gridKey(nc, nr);
+        const blockEid = this.entityMap.get(blockKey);
+        if (blockEid !== undefined) {
+          this.entityMap.delete(blockKey);
+          this.entityMap.set(gridKey(bc, br), blockEid);
+          const bt = world.getComponent<TransformComponent>(blockEid, TRANSFORM_COMPONENT);
+          if (bt) { const bp = gridToWorld(bc, br); bt.x = bp.x; bt.y = bp.y; }
         }
-        break;
+        this.grid[br][bc] = cell;
+        this.grid[nr][nc] = CELL_EMPTY;
+
+        gameAudio.playPush();
+        this.moveEnemyTo(world, enemy, nc, nr);
+        return;
       }
     }
   }
 
   private getEnemyMoveDirections(enemy: EnemyState): Array<{ dc: number; dr: number }> {
-    if (enemy.type === ENEMY_TYPE_BLOB) {
-      return [...ALL_DIRECTIONS].sort(() => Math.random() - 0.5);
-    }
-
-    if (enemy.type === ENEMY_TYPE_BOW && this.player) {
+    // BLOB: 追玩家（曼哈顿最近）
+    if (enemy.type === ENEMY_TYPE_BLOB && this.player) {
       return [...ALL_DIRECTIONS].sort((a, b) => {
-        const nextDistA =
-          Math.abs(this.player!.col - (enemy.col + a.dc)) +
-          Math.abs(this.player!.row - (enemy.row + a.dr));
-        const nextDistB =
-          Math.abs(this.player!.col - (enemy.col + b.dc)) +
-          Math.abs(this.player!.row - (enemy.row + b.dr));
-        return nextDistA - nextDistB;
+        const da = Math.abs(this.player!.col - (enemy.col + a.dc)) + Math.abs(this.player!.row - (enemy.row + a.dr));
+        const db = Math.abs(this.player!.col - (enemy.col + b.dc)) + Math.abs(this.player!.row - (enemy.row + b.dr));
+        return da - db;
       });
     }
-
-    if (enemy.type === ENEMY_TYPE_GEAR && this.player) {
-      const dc = this.player.col - enemy.col;
-      const dr = this.player.row - enemy.row;
-      const primaryDirs =
-        Math.abs(dc) >= Math.abs(dr)
-          ? [
-            { dc: Math.sign(dc), dr: 0 },
-            { dc: 0, dr: Math.sign(dr) },
-          ]
-          : [
-            { dc: 0, dr: Math.sign(dr) },
-            { dc: Math.sign(dc), dr: 0 },
-          ];
-
-      const fallbackDirs = ALL_DIRECTIONS.filter(
-        (dir) => !primaryDirs.some((pick) => pick.dc === dir.dc && pick.dr === dir.dr)
-      );
-
-      return [...primaryDirs.filter((dir) => dir.dc !== 0 || dir.dr !== 0), ...fallbackDirs];
-    }
-
+    // FROG 及其他: 随机
     return [...ALL_DIRECTIONS].sort(() => Math.random() - 0.5);
   }
 
@@ -1822,12 +1914,24 @@ export class GameScene extends Scene {
 
     // Update time display
     const timeSeconds = Math.max(0, Math.floor(this.timeLeft));
-    const timeColor = timeSeconds <= TIME_WARNING_THRESHOLD ? 0xff4444 : PALETTE.SCORE_CYAN;
-    this.setUIText(world, this.timeDisplayEntity, `时间: ${timeSeconds}`);
+    const isWarning = timeSeconds <= TIME_WARNING_THRESHOLD;
+    const timeColor = isWarning ? 0xff2222 : (timeSeconds <= 30 ? 0xffaa00 : PALETTE.SCORE_CYAN);
+    this.setUIText(world, this.timeDisplayEntity, `⏱ ${timeSeconds}`);
 
     const timeUiText = world.getComponent<UITextComponent>(this.timeDisplayEntity, UI_TEXT_COMPONENT);
     if (timeUiText) {
       timeUiText.color = timeColor;
+    }
+
+    // 警告阶段：每秒脉冲缩放
+    const timeTransform = world.getComponent<TransformComponent>(this.timeDisplayEntity, TRANSFORM_COMPONENT);
+    if (timeTransform && isWarning) {
+      const pulse = 1 + 0.18 * Math.abs(Math.sin(this.timeLeft * Math.PI));
+      timeTransform.scaleX = pulse;
+      timeTransform.scaleY = pulse;
+    } else if (timeTransform) {
+      timeTransform.scaleX = 1;
+      timeTransform.scaleY = 1;
     }
 
     // Update heart status hint
@@ -1991,34 +2095,42 @@ export class GameScene extends Scene {
 
     this.phase = 'complete';
     this.victoryType = 'none';
-    this.completeTimer = 2.0;
+    this.completeTimer = 0;
 
-    // Show game over text
     const text = reason === 'hp' ? 'GAME OVER' : '时间到!';
-    this.showVictoryText(world, text);
+    this.showGameOverText(world, text);
 
-    // Transition to game over scene after delay
     setTimeout(() => {
+      if (!this.isActive) return;
       const score = this.getResolvedScore();
       setRunScore(score);
       globalEventBus.emit('scene:gameover', {
         score,
         victoryType: 'defeat',
         levelName: LEVELS[this.currentLevelIndex]?.name ?? `ROUND-${this.currentLevelIndex + 1}`,
-        canSubmitScore: true,
+        canSubmitScore: false,
       });
-    }, 2000);
+    }, 1500);
+  }
+
+  private showGameOverText(world: IWorld, text: string): void {
+    const eid = UIEntityBuilder.create(world, W, H)
+      .withUITransform({ anchor: 'center', y: -20, width: 500, height: 80 })
+      .withText({ text, fontSize: 52, color: 0xff4444, align: 'center', zIndex: Z_UI_POPUP })
+      .build();
+    this.trackEntity(eid);
+    this.victoryUIEntities.push(eid);
   }
 
   // ------------------------------------------------------------------
-  // Check completion (two victory conditions)
+  // Check completion (hearts only)
   // ------------------------------------------------------------------
   private checkComplete(world: IWorld): void {
     if (this.phase !== 'playing') return;
 
     const levelClearBonus = (this.currentLevelIndex + 1) * 1000;
 
-    // Victory 1: all 3 heart blocks pushed together
+    // 唯一胜利条件：3个心心方块连在一起
     if (this.checkHeartsConnected()) {
       this.phase = 'complete';
       this.victoryType = 'hearts';
@@ -2027,19 +2139,6 @@ export class GameScene extends Scene {
       this.completeTimer = 2.5;
       gameAudio.playVictory();
       this.showVictoryText(world, '♥ 心心集合! ♥');
-      return;
-    }
-
-    // Victory 2: all enemies eliminated
-    if (this.initialEnemyCount > 0 && this.enemies.length === 0) {
-      this.phase = 'complete';
-      this.victoryType = 'enemies';
-      if (this.player) this.player.score += levelClearBonus;
-      this.syncRunProgress();
-      this.completeTimer = 2.0;
-      gameAudio.playVictory();
-      this.showVictoryText(world, '敌人全灭!');
-      return;
     }
   }
 
@@ -2121,6 +2220,11 @@ export class GameScene extends Scene {
     if (this.currentLevelIndex >= LEVELS.length - 1) {
       return;
     }
+    // 防止按钮被多次点击重复触发
+    if (this.phase !== 'complete') {
+      return;
+    }
+    this.phase = 'ready'; // 立即锁定，防止重入
 
     this.cleanupAllEntities(world);
     setRunScore(this.getResolvedScore());
@@ -2128,6 +2232,7 @@ export class GameScene extends Scene {
     this.currentLevelIndex++;
     setCurrentLevelIndex(this.currentLevelIndex);
     this.resetState();
+    this.timeLeft = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
     this.registerNextLevelHandler(world);
     this.parseLevel();
     this.createFloor(world);

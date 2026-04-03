@@ -23,9 +23,10 @@ export class GameOverScene extends Scene {
 
     const sceneScore = (data as { score?: number })?.score ?? 0;
     const score = Math.max(sceneScore, getRunScore());
-    const victoryType = (data as { victoryType?: string })?.victoryType ?? 'enemies';
+    const victoryType = (data as { victoryType?: string })?.victoryType ?? 'defeat';
     const levelName = (data as { levelName?: string })?.levelName ?? getCurrentLevelName();
     const canSubmitScore = Boolean((data as { canSubmitScore?: boolean })?.canSubmitScore);
+    const isVictory = victoryType === 'hearts';
     const leaderboard = loadLeaderboard();
 
     // Background
@@ -40,9 +41,9 @@ export class GameOverScene extends Scene {
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -180, width: 500, height: 70 })
         .withText({
-          text: '当前关卡通关!',
+          text: isVictory ? '关卡通关!' : 'GAME OVER',
           fontSize: 48,
-          color: PALETTE.LEVEL_COMPLETE_GOLD,
+          color: isVictory ? PALETTE.LEVEL_COMPLETE_GOLD : 0xff4444,
           align: 'center',
         })
         .build()
@@ -53,7 +54,7 @@ export class GameOverScene extends Scene {
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -120, width: 400, height: 36 })
         .withText({
-          text: `${levelName} CLEAR`,
+          text: isVictory ? `${levelName} CLEAR` : levelName,
           fontSize: 22,
           color: PALETTE.SUBTITLE_WHITE,
           align: 'center',
@@ -61,17 +62,14 @@ export class GameOverScene extends Scene {
         .build()
     );
 
-    // Victory type description
-    const victoryDesc = victoryType === 'hearts'
-      ? '♥ 心心集合通关!'
-      : '敌人全灭通关!';
+    // Victory / defeat description
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -70, width: 400, height: 36 })
         .withText({
-          text: victoryDesc,
+          text: isVictory ? '♥ 心心集合通关!' : '时间耗尽或生命归零',
           fontSize: 20,
-          color: victoryType === 'hearts' ? PALETTE.HEART_RED : PALETTE.SCORE_CYAN,
+          color: isVictory ? PALETTE.HEART_RED : PALETTE.SUBTITLE_WHITE,
           align: 'center',
         })
         .build()
@@ -82,7 +80,7 @@ export class GameOverScene extends Scene {
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -10, width: 400, height: 36 })
         .withText({
-          text: `最终得分: ${score}`,
+          text: `得分: ${score}`,
           fontSize: 28,
           color: PALETTE.SCORE_GOLD,
           align: 'center',
@@ -104,7 +102,8 @@ export class GameOverScene extends Scene {
 
     void this.refreshLeaderboard(world);
 
-    if (canSubmitScore) {
+    // 只有胜利才能提交分数
+    if (isVictory && canSubmitScore) {
       this.mountLeaderboardForm(world, score, levelName);
     }
 
