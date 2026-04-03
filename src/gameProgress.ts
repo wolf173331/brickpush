@@ -110,6 +110,30 @@ export function saveLeaderboardEntry(name: string, score: number, levelName: str
 //     .slice(0, MAX_LEADERBOARD_ENTRIES);
 // }
 
+/** 清空本地排行榜缓存 */
+export function clearLocalLeaderboard(): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.removeItem(LEADERBOARD_KEY);
+  }
+}
+
+/** 清空 Supabase 在线排行榜（需要有 delete 权限） */
+export async function clearOnlineLeaderboard(): Promise<void> {
+  try {
+    const { LeaderboardService } = await import('./supabaseClient');
+    const svc = LeaderboardService.getInstance();
+    await (svc as any).clearAll?.();
+  } catch {
+    // 忽略
+  }
+}
+
+/** 清空本地 + 在线排行榜 */
+export async function clearAllLeaderboards(): Promise<void> {
+  clearLocalLeaderboard();
+  await clearOnlineLeaderboard();
+}
+
 export async function loadLeaderboardShared(): Promise<LeaderboardEntry[]> {
   try {
     // 尝试使用Supabase在线排行榜

@@ -35,8 +35,8 @@ export const PLAYER_PUSH_DISTANCE = 1; // 默认推动距离（格数）
 export const PLAYER_MAX_PUSH_DISTANCE = 10; // 最大推动距离
 
 // ---- Enemy ----
-export const ENEMY_MOVE_INTERVAL_MIN = 0.8;
-export const ENEMY_MOVE_INTERVAL_MAX = 2.0;
+export const ENEMY_MOVE_INTERVAL_MIN = 0.18;
+export const ENEMY_MOVE_INTERVAL_MAX = 0.35;
 
 export const ENEMY_TYPE_FROG = 0;
 export const ENEMY_TYPE_BLOB = 1;
@@ -55,13 +55,20 @@ export const BOMB_EXPLOSION_DELAY = 4.5;
 export const BOMB_EXPLOSION_RANGE = 1;
 
 // ---- Score ----
-export const SCORE_BLOCK_CRUSH = 1000;
-export const SCORE_BOMB_KILL = 2000;
-export const SCORE_YELLOW_ITEM = 500;
-export const SCORE_BLUE_ITEM = 300;
-export const SCORE_BLOCK_BREAK = 100;
-export const SCORE_STAR_BREAK = 800;
+export const SCORE_BLOCK_CRUSH = 500;    // 方块压死怪物（基础，combo会翻倍）
+export const SCORE_BOMB_KILL   = 500;    // 炸弹杀怪（基础，combo会翻倍）
+export const SCORE_YELLOW_ITEM = 200;
+export const SCORE_BLUE_ITEM   = 300;
+export const SCORE_BLOCK_BREAK = 100;    // 推坏普通方块
+export const SCORE_WALL_BREAK  = 200;    // 推坏墙
+export const SCORE_STAR_BREAK  = 300;    // 推坏星块
 export const SCORE_HEART_MERGE = 5000;
+
+// ---- Combo ----
+export const COMBO_WINDOW = 5.0;         // combo 窗口（秒）
+export const COMBO_BASE_KILL = 500;      // 第1杀
+export const COMBO_INCREMENT = 500;      // 每次 combo 递增
+export const COMBO_MAX = 10000;          // combo 上限
 
 // ---- Heart victory ----
 export const HEARTS_NEEDED_FOR_WIN = 3;
@@ -126,11 +133,16 @@ export interface LevelData {
   name: string;
   grid: number[][];
   enemySequence: number[];
+  enemyWaves: number;      // 总波数（1-5）
+  enemiesPerWave: number;  // 每波敌人数量
 }
 
 export const LEVELS: LevelData[] = [
   // This will be populated dynamically
 ];
+
+/** 当前开放的最大关卡数，调整此值控制玩家可游玩的关卡范围 */
+export const MAX_UNLOCKED_LEVELS = 15;
 
 let currentLevelIndexState = 0;
 
@@ -150,16 +162,22 @@ export function getCurrentLevelName(): string {
 }
 
 export function loadLevels(): Promise<void> {
-  return import('./levels.json')
+  // 用 fetch 而不是 import()，确保每次都读取最新文件，不受模块缓存影响
+  return fetch(import.meta.env.BASE_URL + 'assets/levels.json?t=' + Date.now())
+    .then(r => {
+      if (!r.ok) throw new Error('fetch failed: ' + r.status);
+      return r.json();
+    })
     .then((module) => {
-      // Clear and populate LEVELS array
       LEVELS.length = 0;
-      module.levels.forEach((level: any) => {
+      module.levels.slice(0, MAX_UNLOCKED_LEVELS).forEach((level: any) => {
         LEVELS.push({
           id: level.id,
           name: level.name,
           grid: level.grid,
           enemySequence: level.enemySequence,
+          enemyWaves: level.enemyWaves ?? 1,
+          enemiesPerWave: level.enemiesPerWave ?? 3,
         });
       });
       setCurrentLevelIndex(currentLevelIndexState);
@@ -186,6 +204,8 @@ export function loadLevels(): Promise<void> {
           [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         ],
         enemySequence: [ENEMY_TYPE_FROG, ENEMY_TYPE_BLOB, ENEMY_TYPE_BOW, ENEMY_TYPE_GEAR],
+        enemyWaves: 1,
+        enemiesPerWave: 3,
       };
       LEVELS.push(defaultLevel);
       setCurrentLevelIndex(0);

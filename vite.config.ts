@@ -12,4 +12,6 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: true,
   },
+  // 让 src/constants 目录下的 JSON 可以通过 fetch 直接访问
+  publicDir: 'public',
 });

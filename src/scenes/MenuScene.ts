@@ -23,7 +23,7 @@ export class MenuScene extends Scene {
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -180, width: 600, height: 80 })
-        .withText({ text: '把心串成串', fontSize: 56, color: PALETTE.TITLE_YELLOW, align: 'center' })
+        .withText({ text: '把心串串', fontSize: 56, color: PALETTE.TITLE_YELLOW, align: 'center' })
         .build()
     );
 
@@ -77,7 +77,7 @@ export class MenuScene extends Scene {
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: 190, width: 500, height: 28 })
         .withText({
-          text: '♥ 将3个心心方块推到一起即可通关!',
+          text: '♥ 将心心方块横或竖串在一起即可通关!',
           fontSize: 16,
           color: PALETTE.HEART_RED,
           align: 'center',

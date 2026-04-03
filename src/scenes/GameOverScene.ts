@@ -39,7 +39,7 @@ export class GameOverScene extends Scene {
     // Title
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: -180, width: 500, height: 70 })
+        .withUITransform({ anchor: 'center', y: -240, width: 500, height: 70 })
         .withText({
           text: isVictory ? '关卡通关!' : 'GAME OVER',
           fontSize: 48,
@@ -52,7 +52,7 @@ export class GameOverScene extends Scene {
     // Subtitle
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: -120, width: 400, height: 36 })
+        .withUITransform({ anchor: 'center', y: -175, width: 400, height: 36 })
         .withText({
           text: isVictory ? `${levelName} CLEAR` : levelName,
           fontSize: 22,
@@ -65,7 +65,7 @@ export class GameOverScene extends Scene {
     // Victory / defeat description
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: -70, width: 400, height: 36 })
+        .withUITransform({ anchor: 'center', y: -130, width: 400, height: 36 })
         .withText({
           text: isVictory ? '♥ 心心集合通关!' : '时间耗尽或生命归零',
           fontSize: 20,
@@ -78,10 +78,10 @@ export class GameOverScene extends Scene {
     // Score
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: -10, width: 400, height: 36 })
+        .withUITransform({ anchor: 'center', y: -80, width: 400, height: 40 })
         .withText({
           text: `得分: ${score}`,
-          fontSize: 28,
+          fontSize: 30,
           color: PALETTE.SCORE_GOLD,
           align: 'center',
         })
@@ -89,7 +89,7 @@ export class GameOverScene extends Scene {
     );
 
     const leaderboardEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'center', y: 52, width: 520, height: 160 })
+      .withUITransform({ anchor: 'center', y: 20, width: 520, height: 160 })
       .withText({
         text: this.formatLeaderboardText(leaderboard),
         fontSize: 16,
@@ -102,22 +102,22 @@ export class GameOverScene extends Scene {
 
     void this.refreshLeaderboard(world);
 
-    // 只有胜利才能提交分数
-    if (isVictory && canSubmitScore) {
+    // 只有胜利且分数大于0才能提交
+    if (isVictory && canSubmitScore && score > 0) {
       this.mountLeaderboardForm(world, score, levelName);
     }
 
     // Play again
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', y: 170, width: 220, height: 50 })
+        .withUITransform({ anchor: 'center', y: 210, width: 220, height: 50 })
         .withButton({ label: '再来一局', onClick: 'scene:game', borderRadius: 8 })
         .build()
     );
 
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', x: -140, y: 240, width: 220, height: 50 })
+        .withUITransform({ anchor: 'center', x: -140, y: 278, width: 220, height: 50 })
         .withButton({ label: '街机排行榜', onClick: 'scene:leaderboard', borderRadius: 8 })
         .build()
     );
@@ -125,7 +125,7 @@ export class GameOverScene extends Scene {
     // Back to menu
     this.trackEntity(
       UIEntityBuilder.create(world, W, H)
-        .withUITransform({ anchor: 'center', x: 140, y: 240, width: 220, height: 50 })
+        .withUITransform({ anchor: 'center', x: 140, y: 278, width: 220, height: 50 })
         .withButton({ label: '返回菜单', onClick: 'scene:menu', borderRadius: 8 })
         .build()
     );

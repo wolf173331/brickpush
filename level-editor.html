@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>关卡编辑器</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a2e;color:#eee;font-family:monospace;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#topbar{background:#0d0d1e;border-bottom:1px solid #2a2a3a;padding:6px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.logo{color:#ffe066;font-size:13px;font-weight:bold;margin-right:4px}
+#tile-palette{display:flex;gap:5px;align-items:center}
+.tile-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;width:58px;height:52px;border:2px solid #333;border-radius:5px;cursor:pointer;background:#1e1e3a;color:#eee;user-select:none}
+.tile-btn:hover{border-color:#666}.tile-btn.selected{border-color:#ffe066;background:#2a2a18}
+.tile-icon{font-size:20px;line-height:1}.tile-name{font-size:9px;color:#aaa;margin-top:1px}.tile-key{font-size:9px;color:#555}
+.sep{width:1px;height:40px;background:#2a2a3a;margin:0 4px}
+.btn{padding:6px 11px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:monospace;font-weight:bold;white-space:nowrap}
+.btn-file{background:#1a4a8a;color:#adf}.btn-save{background:#1a6a2a;color:#afa}.btn-saveas{background:#2a4a1a;color:#cfa}
+.btn-new{background:#2a2a4a;color:#aaf}.btn-danger{background:#5a1a1a;color:#faa}.btn-warn{background:#4a3a00;color:#fda}.btn-gray{background:#2a2a3a;color:#ccc}
+#file-status{font-size:11px;color:#666;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#file-status.ok{color:#4a9}#file-status.err{color:#f66}
+#workspace{flex:1;display:flex;overflow:hidden}
+#sidebar{width:200px;min-width:200px;background:#0f0f1e;padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;border-right:1px solid #2a2a3a}
+.sec{color:#666;font-size:10px;text-transform:uppercase;letter-spacing:1px}
+#level-list{display:flex;flex-direction:column;gap:3px;max-height:200px;overflow-y:auto}
+.lv-btn{background:#1a1a2e;border:1px solid #2a2a3a;color:#bbb;padding:4px 8px;cursor:pointer;font-size:12px;text-align:left;border-radius:3px}
+.lv-btn:hover{background:#252540}.lv-btn.active{background:#1a3060;border-color:#4a7aff;color:#fff}
+.prop-row{display:flex;align-items:center;gap:5px;font-size:12px}
+.prop-row label{color:#888;flex:1;font-size:11px}
+.prop-row input{background:#1a1a2e;border:1px solid #333;color:#eee;padding:3px 5px;border-radius:3px;font-size:12px;width:65px}
+#enemy-seq-input{background:#1a1a2e;border:1px solid #333;color:#eee;padding:3px 5px;border-radius:3px;font-size:11px;width:100%}
+.lock-note{background:#1a1800;border:1px solid #443300;border-radius:4px;padding:5px 7px;font-size:10px;color:#997700;line-height:1.6}
+#editor-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#canvas-wrap{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;background:#0a0a18;padding:16px}
+#grid-canvas{cursor:crosshair}
+#statusbar{background:#0d0d1e;padding:4px 12px;font-size:11px;border-top:1px solid #1a1a2a;display:flex;gap:14px;flex-shrink:0}
+.si{color:#555}.sv{color:#aaa}
+#modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center}
+#modal-overlay.show{display:flex}
+#modal-box{background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:18px;min-width:400px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;gap:10px}
+#modal-box h3{color:#ffe066;font-size:13px}
+#modal-ta{background:#0d0d1e;border:1px solid #333;color:#bbb;padding:8px;border-radius:4px;font-family:monospace;font-size:11px;flex:1;resize:none;min-height:260px}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <span class="logo">🎮 关卡编辑器</span>
+  <div id="tile-palette"></div>
+  <div class="sep"></div>
+  <button class="btn btn-gray" onclick="undo()">↩ 撤销</button>
+  <button class="btn btn-gray" onclick="redo()">↪ 重做</button>
+  <div class="sep"></div>
+  <button class="btn btn-file" onclick="openFile()">📂 打开文件</button>
+  <button class="btn btn-save" onclick="saveFile()" id="btn-save" disabled>💾 保存</button>
+  <button class="btn btn-saveas" onclick="saveFileAs()">另存为</button>
+  <span id="file-status">未打开文件</span>
+  <div style="flex:1"></div>
+  <span id="cursor-pos" style="color:#555;font-size:11px">-</span>
+</div>
+<div id="workspace">
+  <div id="sidebar">
+    <div class="sec">关卡列表</div>
+    <div id="level-list"></div>
+    <button class="btn btn-new" onclick="newLevel()">+ 新建关卡</button>
+    <button class="btn btn-danger" onclick="deleteLevel()">删除</button>
+    <button class="btn btn-warn" onclick="clearGrid()">清空内部</button>
+    <hr style="border-color:#1a1a2a">
+    <div class="sec">关卡属性</div>
+    <div class="prop-row"><label>关卡名</label><input type="text" id="prop-name" value="ROUND-01" onchange="saveProp()" style="width:90px"></div>
+    <div class="prop-row"><label>波数(1-5)</label><input type="number" id="prop-waves" min="1" max="5" value="1" onchange="saveProp()"></div>
+    <div class="prop-row"><label>每波数量</label><input type="number" id="prop-per-wave" min="1" max="10" value="3" onchange="saveProp()"></div>
+    <div style="font-size:10px;color:#666">敌人序列(0-3,逗号分隔)</div>
+    <input type="text" id="enemy-seq-input" value="0,1,2,3" onchange="saveProp()">
+    <hr style="border-color:#1a1a2a">
+    <div class="lock-note">外圈固定为草地 / 玩家出生点固定中央</div>
+  </div>
+  <div id="editor-area">
+    <div id="canvas-wrap"><canvas id="grid-canvas"></canvas></div>
+    <div id="statusbar">
+      <span class="si">关卡:<span class="sv" id="st-level">-</span></span>
+      <span class="si">悬停:<span class="sv" id="st-cell">-</span></span>
+      <span class="si">心心:<span class="sv" id="st-hearts">0</span></span>
+      <span class="si">炸弹:<span class="sv" id="st-bombs">0</span></span>
+      <span class="si">墙:<span class="sv" id="st-walls">0</span></span>
+      <span class="si">方块:<span class="sv" id="st-blocks">0</span></span>
+      <span class="si">道具:<span class="sv" id="st-items">0</span></span>
+    </div>
+  </div>
+</div>
+<div id="modal-overlay">
+  <div id="modal-box">
+    <h3 id="modal-title">导入 JSON</h3>
+    <textarea id="modal-ta" placeholder="粘贴 levels.json 内容..."></textarea>
+    <div class="modal-btns">
+      <button class="btn btn-gray" onclick="closeModal()">取消</button>
+      <button class="btn btn-file" id="modal-ok" onclick="confirmModal()">确认</button>
+    </div>
+  </div>
+</div>
+<script>
+const COLS=15,ROWS=13;
+const PAINTABLE=[
+  {id:0,label:'空地',icon:'.',color:'#1a2a1a',key:'0'},
+  {id:1,label:'墙',icon:'#',color:'#555555',key:'1'},
+  {id:2,label:'方块',icon:'B',color:'#44BBAA',key:'2'},
+  {id:4,label:'心心',icon:'H',color:'#FF4466',key:'4'},
+  {id:5,label:'炸弹',icon:'X',color:'#FF8800',key:'5'},
+  {id:3,label:'星块(道具)',icon:'S',color:'#FFD700',key:'6'},
+];
+const CC={0:'#1a2a1a',1:'#555',2:'#44BBAA',3:'#FFD700',4:'#FF4466',5:'#FF8800',7:'#44AAFF',10:'#DDAA00',11:'#3a6a2a'};
+const CI={0:'',1:'#',2:'B',3:'S',4:'H',5:'X',7:'P',10:'*',11:'~'};
+const CN={0:'空地',1:'墙',2:'方块',3:'星块',4:'心心',5:'炸弹',7:'玩家',10:'道具',11:'草地'};
+const isLocked=(c,r)=>r===0||r===ROWS-1||c===0||c===COLS-1;
+const isPlayer=(c,r)=>c===7&&r===6;
+let levels=[],cur=0,sel=2,cs=44,drawing=false,lastK=null,US=[],RS=[],fh=null;
+function makeGrid(){
+  const g=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(isLocked(c,r))g[r][c]=11;
+  g[6][7]=7;return g;
+}
+function fix(g){
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){if(isLocked(c,r))g[r][c]=11;if(isPlayer(c,r))g[r][c]=7;}
+  return g;
+}
+function newLevel(){
+  const n=levels.length+1;
+  levels.push({id:'level_'+String(n).padStart(2,'0'),name:'ROUND-'+String(n).padStart(2,'0'),grid:makeGrid(),enemySequence:[0,1,2,3],enemyWaves:1,enemiesPerWave:3});
+  cur=levels.length-1;renderList();loadLv(cur);
+}
+function deleteLevel(){
+  if(levels.length<=1){alert('至少保留一个');return;}
+  if(!confirm('删除 '+levels[cur].name+'?'))return;
+  levels.splice(cur,1);cur=Math.min(cur,levels.length-1);renderList();loadLv(cur);
+}
+function clearGrid(){
+  if(!confirm('清空内部?'))return;pushU();
+  const g=levels[cur].grid;
+  for(let r=1;r<ROWS-1;r++)for(let c=1;c<COLS-1;c++)if(!isPlayer(c,r))g[r][c]=0;
+  render();stat();
+}
+function renderList(){
+  const el=document.getElementById('level-list');el.innerHTML='';
+  levels.forEach((lv,i)=>{
+    const b=document.createElement('button');b.className='lv-btn'+(i===cur?' active':'');b.textContent=lv.name;
+    b.onclick=()=>{cur=i;renderList();loadLv(i);};el.appendChild(b);
+  });
+}
+function loadLv(i){
+  const lv=levels[i];fix(lv.grid);
+  document.getElementById('prop-name').value=lv.name;
+  document.getElementById('prop-waves').value=lv.enemyWaves||1;
+  document.getElementById('prop-per-wave').value=lv.enemiesPerWave||3;
+  document.getElementById('enemy-seq-input').value=(lv.enemySequence||[0,1,2,3]).join(',');
+  US=[];RS=[];render();stat();
+}
+function saveProp(){
+  const lv=levels[cur];
+  lv.name=document.getElementById('prop-name').value.trim()||lv.name;
+  lv.enemyWaves=Math.max(1,Math.min(5,parseInt(document.getElementById('prop-waves').value)||1));
+  lv.enemiesPerWave=Math.max(1,parseInt(document.getElementById('prop-per-wave').value)||3);
+  const s=document.getElementById('enemy-seq-input').value.split(',').map(x=>parseInt(x.trim())).filter(n=>!isNaN(n)&&n>=0&&n<=3);
+  lv.enemySequence=s.length?s:[0,1,2,3];renderList();
+}
+function buildPalette(){
+  const el=document.getElementById('tile-palette');el.innerHTML='';
+  PAINTABLE.forEach(t=>{
+    const b=document.createElement('button');b.className='tile-btn'+(t.id===sel?' selected':'');
+    b.style.background=t.color+'2a';b.style.borderColor=t.id===sel?'#ffe066':'#333';
+    b.title=t.label+' ['+t.key+']';
+    b.innerHTML='<span class="tile-icon">'+t.icon+'</span><span class="tile-name">'+t.label+'</span><span class="tile-key">['+t.key+']</span>';
+    b.onclick=()=>{sel=t.id;buildPalette();};el.appendChild(b);
+  });
+}
+const cv=document.getElementById('grid-canvas'),cx=cv.getContext('2d');
+function render(){
+  if(!levels[cur])return;
+  const g=levels[cur].grid,S=cs;cv.width=COLS*S;cv.height=ROWS*S;
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const v=g[r][c],x=c*S,y=r*S,lk=isLocked(c,r)||isPlayer(c,r);
+    cx.fillStyle=CC[v]||'#222';cx.fillRect(x,y,S,S);
+    if(lk&&v!==7){cx.save();cx.globalAlpha=0.1;cx.strokeStyle='#fff';cx.lineWidth=1;for(let d=-S;d<S*2;d+=8){cx.beginPath();cx.moveTo(x+d,y);cx.lineTo(x+d+S,y+S);cx.stroke();}cx.restore();}
+    cx.strokeStyle=lk?'#ffffff15':'#00000035';cx.lineWidth=0.5;cx.strokeRect(x+.5,y+.5,S-1,S-1);
+    const ic=CI[v];
+    if(ic){cx.fillStyle=lk?'#ffffff88':'#fff';cx.font='bold '+Math.floor(S*.42)+'px monospace';cx.textAlign='center';cx.textBaseline='middle';cx.fillText(ic,x+S/2,y+S/2);}
+    if(!lk&&S>=36){cx.fillStyle='#ffffff18';cx.font=Math.floor(S*.16)+'px monospace';cx.textAlign='left';cx.textBaseline='top';cx.fillText(c+','+r,x+2,y+2);}
+  }
+}
+function cellAt(e){const r=cv.getBoundingClientRect();return{c:Math.floor((e.clientX-r.left)/r.width*COLS),r:Math.floor((e.clientY-r.top)/r.height*ROWS)};}
+function paint(c,r,t){
+  if(c<0||c>=COLS||r<0||r>=ROWS||isLocked(c,r)||isPlayer(c,r))return;
+  const g=levels[cur].grid;if(g[r][c]===t)return;g[r][c]=t;render();stat();
+}
+cv.addEventListener('mousedown',e=>{e.preventDefault();pushU();drawing=true;const{c,r}=cellAt(e);lastK=c+','+r;paint(c,r,e.button===2?0:sel);});
+cv.addEventListener('mousemove',e=>{
+  const{c,r}=cellAt(e);const v=levels[cur]&&levels[cur].grid[r]&&levels[cur].grid[r][c];
+  document.getElementById('cursor-pos').textContent='('+c+','+r+') '+(CN[v]||'');
+  document.getElementById('st-cell').textContent=c+','+r;
+  if(!drawing)return;const k=c+','+r;if(k===lastK)return;lastK=k;paint(c,r,e.buttons===2?0:sel);
+});
+cv.addEventListener('mouseup',()=>{drawing=false;});cv.addEventListener('mouseleave',()=>{drawing=false;});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('wheel',e=>{e.preventDefault();cs=Math.max(22,Math.min(72,cs-Math.sign(e.deltaY)*4));render();},{passive:false});
+function pushU(){US.push(JSON.stringify(levels[cur].grid));if(US.length>60)US.shift();RS=[];}
+function undo(){if(!US.length)return;RS.push(JSON.stringify(levels[cur].grid));levels[cur].grid=JSON.parse(US.pop());render();stat();}
+function redo(){if(!RS.length)return;US.push(JSON.stringify(levels[cur].grid));levels[cur].grid=JSON.parse(RS.pop());render();stat();}
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();undo();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='y'){e.preventDefault();redo();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveFile();return;}
+  const m={'0':0,'1':1,'2':2,'4':4,'5':5,'6':3};if(m[e.key]!==undefined){sel=m[e.key];buildPalette();}
+});
+function stat(){
+  const g=levels[cur]&&levels[cur].grid;if(!g)return;const f=g.flat();
+  document.getElementById('st-level').textContent=levels[cur].name;
+  document.getElementById('st-hearts').textContent=f.filter(v=>v===4).length;
+  document.getElementById('st-bombs').textContent=f.filter(v=>v===5).length;
+  document.getElementById('st-walls').textContent=f.filter(v=>v===1).length;
+  document.getElementById('st-blocks').textContent=f.filter(v=>v===2).length;
+  document.getElementById('st-items').textContent=f.filter(v=>v===3).length;
+}
+function toJson(){saveProp();levels.forEach(lv=>fix(lv.grid));return JSON.stringify({levels},null,2);}
+function setFS(msg,cls){const el=document.getElementById('file-status');el.textContent=msg;el.className=cls||'';}
+async function openFile(){
+  if(!window.showOpenFilePicker){fallbackImport();return;}
+  try{
+    const[h]=await window.showOpenFilePicker({types:[{description:'JSON',accept:{'application/json':['.json']}}],multiple:false});
+    fh=h;loadJson(await(await h.getFile()).text());document.getElementById('btn-save').disabled=false;setFS('📄 '+h.name,'ok');
+  }catch(e){if(e.name!=='AbortError')setFS('打开失败: '+e.message,'err');}
+}
+async function saveFile(){
+  if(!fh){saveFileAs();return;}
+  try{const w=await fh.createWritable();await w.write(toJson());await w.close();setFS('已保存 '+fh.name,'ok');}
+  catch(e){setFS('保存失败: '+e.message,'err');}
+}
+async function saveFileAs(){
+  if(!window.showSaveFilePicker){fallbackExport();return;}
+  try{
+    const h=await window.showSaveFilePicker({suggestedName:'levels.json',types:[{description:'JSON',accept:{'application/json':['.json']}}]});
+    fh=h;const w=await h.createWritable();await w.write(toJson());await w.close();
+    document.getElementById('btn-save').disabled=false;setFS('已保存 '+h.name,'ok');
+  }catch(e){if(e.name!=='AbortError')setFS('保存失败: '+e.message,'err');}
+}
+function fallbackImport(){document.getElementById('modal-title').textContent='导入 JSON';document.getElementById('modal-ta').value='';document.getElementById('modal-ok').textContent='导入';document.getElementById('modal-overlay').classList.add('show');}
+function fallbackExport(){const b=new Blob([toJson()],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='levels.json';a.click();}
+function loadJson(text){
+  const raw=JSON.parse(text);const arr=raw.levels||(Array.isArray(raw)?raw:[raw]);
+  if(!arr.length)throw new Error('空数据');
+  levels=arr.map(lv=>({id:lv.id||'level_xx',name:lv.name||'ROUND-XX',grid:fix(lv.grid||makeGrid()),enemySequence:lv.enemySequence||[0,1,2,3],enemyWaves:lv.enemyWaves||1,enemiesPerWave:lv.enemiesPerWave||3}));
+  cur=0;renderList();loadLv(0);
+}
+function confirmModal(){try{loadJson(document.getElementById('modal-ta').value);closeModal();}catch(e){alert('解析失败: '+e.message);}}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('show');}
+document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target===document.getElementById('modal-overlay'))closeModal();});
+buildPalette();
+fetch('./assets/levels.json').then(r=>r.json()).then(data=>{loadJson(JSON.stringify(data));document.getElementById('btn-save').disabled=false;setFS('⚠️ 点"打开文件"选同一个 levels.json，之后💾保存可直接覆盖');}).catch(()=>{newLevel();setFS('请点击"打开文件"加载 levels.json');});
+</script>
+</body>
+</html>
