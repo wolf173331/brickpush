@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supabase连接测试 - BrickPush游戏</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin: 20px 0;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+        .step-card {
+            background: white;
+            color: #333;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .status {
+            display: inline-block;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .status-success {
+            background: #4CAF50;
+            color: white;
+        }
+        .status-waiting {
+            background: #FF9800;
+            color: white;
+        }
+        .status-error {
+            background: #F44336;
+            color: white;
+        }
+        .api-keys {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
+        }
+        .test-section {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+        .test-button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: #2196F3;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .test-button:hover {
+            transform: translateY(-2px);
+        }
+        .test-button.success {
+            background: #4CAF50;
+        }
+        .test-button.warning {
+            background: #FF9800;
+        }
+        .test-button.danger {
+            background: #F44336;
+        }
+        .result-area {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .form-group {
+            margin: 15px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        .env-example {
+            background: #f5f5f5;
+            color: #333;
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #2196F3;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        .section-title {
+            font-size: 1.5em;
+            margin: 30px 0 15px 0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 10px;
+        }
+        .info-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        .info-box.warning {
+            border-left-color: #FF9800;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 20px;
+            }
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+    <!-- 引入Supabase客户端 -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Supabase连接测试</h1>
+        <p class="subtitle">为BrickPush游戏配置在线排行榜和多人联机</p>
+        
+        <div class="step-card">
+            <h3><span class="step-number">1</span> 注册Supabase</h3>
+            <p>访问 <a href="https://supabase.com" target="_blank" style="color: #667eea; font-weight: bold;">supabase.com</a> 注册账号</p>
+            <p>推荐使用GitHub账号登录，创建免费项目</p>
+            <div class="status status-waiting">⏳ 等待注册</div>
+        </div>
+        
+        <div class="step-card">
+            <h3><span class="step-number">2</span> 获取API密钥</h3>
+            <p>登录Supabase后，创建新项目：</p>
+            <ol>
+                <li>点击 "New Project"</li>
+                <li>填写项目名称: <code>brickpush-game</code></li>
+                <li>设置数据库密码: 记住这个密码</li>
+                <li>选择区域: 建议选择亚洲区 (Singapore)</li>
+                <li>点击 "Create new project"</li>
+            </ol>
+            
+            <div class="api-keys">
+                <p><strong>需要获取的密钥：</strong></p>
+                <p>1. <strong>Project URL</strong>: https://[project-id].supabase.co</p>
+                <p>2. <strong>anon/public API key</strong>: eyJh... (以eyJ开头)</p>
+            </div>
+        </div>
+        
+        <div class="step-card">
+            <h3><span class="step-number">3</span> 填写API密钥</h3>
+            <p>将你的Supabase密钥填入下方进行测试：</p>
+            
+            <div class="form-group">
+                <label for="supabaseUrl">Project URL</label>
+                <input type="text" id="supabaseUrl" placeholder="https://[project-id].supabase.co">
+            </div>
+            
+            <div class="form-group">
+                <label for="supabaseKey">anon/public API key</label>
+                <input type="text" id="supabaseKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+            </div>
+            
+            <div class="test-buttons">
+                <button class="test-button success" onclick="testConnection()">🔗 测试连接</button>
+                <button class="test-button" onclick="createTestTables()">🗃️ 创建测试表</button>
+                <button class="test-button warning" onclick="testRealtime()">📡 测试实时功能</button>
+                <button class="test-button danger" onclick="resetTest()">🔄 重置测试</button>
+            </div>
+            
+            <div id="testResult" class="result-area">
+                // 测试结果将显示在这里
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3 class="section-title">🔧 环境变量配置</h3>
+            
+            <p>测试成功后，在你的项目中创建 <code>.env.local</code> 文件：</p>
+            
+            <div class="env-example" id="envExample">
+VITE_SUPABASE_URL=你的Supabase_URL
+VITE_SUPABASE_ANON_KEY=你的anon_key
+            </div>
+            
+            <button class="test-button" onclick="copyEnvConfig()">📋 复制环境变量配置</button>
+        </div>
+        
+        <div class="info-box">
+            <h4>🎯 下一步操作</h4>
+            <ol>
+                <li>完成Supabase注册和项目创建</li>
+                <li>测试连接成功</li>
+                <li>创建数据库表结构</li>
+                <li>修改游戏代码集成Supabase</li>
+                <li>测试在线排行榜功能</li>
+            </ol>
+        </div>
+        
+        <div class="info-box warning">
+            <h4>⚠️ 安全提醒</h4>
+            <ul>
+                <li><strong>不要</strong>将API密钥提交到GitHub公开仓库</li>
+                <li>使用 <code>.env.local</code> 文件存储密钥</li>
+                <li>确保 <code>.env.local</code> 在 <code>.gitignore</code> 中</li>
+                <li>仅使用anon key，不要使用service role key在客户端</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        let supabaseClient = null;
+        const testResult = document.getElementById('testResult');
+        const envExample = document.getElementById('envExample');
+        
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString('zh-CN');
+            testResult.textContent += `[${timestamp}] ${message}\n`;
+            testResult.scrollTop = testResult.scrollHeight;
+        }
+        
+        function clearLog() {
+            testResult.textContent = '';
+        }
+        
+        function getSupabaseUrl() {
+            return document.getElementById('supabaseUrl').value.trim();
+        }
+        
+        function getSupabaseKey() {
+            return document.getElementById('supabaseKey').value.trim();
+        }
+        
+        function initSupabase() {
+            const url = getSupabaseUrl();
+            const key = getSupabaseKey();
+            
+            if (!url || !key) {
+                alert('请先填写Supabase URL和API Key');
+                return null;
+            }
+            
+            try {
+                supabaseClient = supabase.createClient(url, key, {
+                    auth: {
+                        persistSession: false
+                    }
+                });
+                log('✅ Supabase客户端初始化成功');
+                return supabaseClient;
+            } catch (error) {
+                log(`❌ 初始化失败: ${error.message}`);
+                return null;
+            }
+        }
+        
+        async function testConnection() {
+            clearLog();
+            const client = initSupabase();
+            if (!client) return;
+            
+            log('正在测试连接...');
+            
+            try {
+                // 测试基础连接
+                const { data, error } = await client.from('_test_connection').select('*').limit(1);
+                
+                if (error) {
+                    if (error.code === 'PGRST116') {
+                        log('✅ 连接成功！表不存在是正常的');
+                        log('Supabase项目已正确配置');
+                        updateEnvExample();
+                        return;
+                    }
+                    throw error;
+                }
+                
+                log('✅ 连接成功！');
+                log(`返回数据: ${JSON.stringify(data, null, 2)}`);
+                updateEnvExample();
+                
+            } catch (error) {
+                log(`❌ 连接失败: ${error.message}`);
+                log('请检查：');
+                log('1. URL是否正确（以 .supabase.co 结尾）');
+                log('2. API Key是否正确（以 eyJ 开头）');
+                log('3. 网络是否可访问Supabase');
+            }
+        }
+        
+        async function createTestTables() {
+            clearLog();
+            const client = initSupabase();
+            if (!client) return;
+            
+            log('正在创建测试表...');
+            
+            try {
+                // 创建测试玩家表
+                const { error: playerError } = await client.rpc('create_test_tables');
+                
+                if (playerError) {
+                    // 如果RPC不存在，使用SQL创建
+                    log('使用SQL创建测试表...');
+                    
+                    // 创建players表
+                    const { error: createPlayersError } = await client.from('_sql').select('*').eq('sql', `
+                        CREATE TABLE IF NOT EXISTS test_players (
+                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                            username VARCHAR(20) UNIQUE NOT NULL,
+                            display_name VARCHAR(50),
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                    `);
+                    
+                    if (createPlayersError) {
+                        log('⚠️ 需要手动创建表，请使用SQL编辑器执行：');
+                        log(`
+-- 创建测试玩家表
+CREATE TABLE test_players (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username VARCHAR(20) UNIQUE NOT NULL,
+  display_name VARCHAR(50),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 创建测试排行榜表
+CREATE TABLE test_leaderboard (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID REFERENCES test_players(id),
+  score INTEGER NOT NULL,
+  level_name VARCHAR(20) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+                        `);
+                    } else {
+                        log('✅ 测试表创建成功！');
+                    }
+                } else {
+                    log('✅ 测试表创建成功！');
+                }
+                
+                // 测试插入数据
+                const testData = {
+                    username: `test_player_${Math.floor(Math.random() * 1000)}`,
+                    display_name: '测试玩家'
+                };
+                
+                const { data: playerData, error: insertError } = await client
+                    .from('test_players')
+                    .insert(testData)
+                    .select()
+                    .single();
+                
+                if (insertError) {
+                    log(`⚠️ 插入测试数据失败: ${insertError.message}`);
+                } else {
+                    log(`✅ 插入测试玩家成功: ${playerData.username}`);
+                    
+                    // 插入排行榜数据
+                    const leaderboardData = {
+                        player_id: playerData.id,
+                        score: Math.floor(Math.random() * 10000),
+                        level_name: 'ROUND-01'
+                    };
+                    
+                    const { data: lbData, error: lbError } = await client
+                        .from('test_leaderboard')
+                        .insert(leaderboardData)
+                        .select()
+                        .single();
+                    
+                    if (lbError) {
+                        log(`⚠️ 插入排行榜数据失败: ${lbError.message}`);
+                    } else {
+                        log(`✅ 插入排行榜记录成功: 分数 ${lbData.score}`);
+                    }
+                }
+                
+            } catch (error) {
+                log(`❌ 创建表失败: ${error.message}`);
+            }
+        }
+        
+        async function testRealtime() {
+            clearLog();
+            const client = initSupabase();
+            if (!client) return;
+            
+            log('正在测试实时功能...');
+            
+            try {
+                // 订阅test_leaderboard表的变化
+                const subscription = client
+                    .channel('test-realtime')
+                    .on(
+                        'postgres_changes',
+                        { event: '*', schema: 'public', table: 'test_leaderboard' },
+                        (payload) => {
+                            log(`📡 实时更新: ${payload.eventType} 操作`);
+                            log(`数据: ${JSON.stringify(payload.new, null, 2)}`);
+                        }
+                    )
+                    .subscribe((status) => {
+                        if (status === 'SUBSCRIBED') {
+                            log('✅ 实时订阅成功！');
+                            log('等待30秒测试实时更新...');
+                            
+                            // 30秒后自动取消订阅
+                            setTimeout(() => {
+                                subscription.unsubscribe();
+                                log('🔄 实时订阅已取消');
+                            }, 30000);
+                        }
+                    });
+                
+                // 插入一条测试数据触发实时更新
+                setTimeout(async () => {
+                    try {
+                        const testData = {
+                            player_id: (await client.from('test_players').select('id').limit(1).single()).data?.id,
+                            score: Math.floor(Math.random() * 10000),
+                            level_name: 'REALTIME-TEST'
+                        };
+                        
+                        const { error } = await client
+                            .from('test_leaderboard')
+                            .insert(testData);
+                        
+                        if (error) {
+                            log(`⚠️ 插入实时测试数据失败: ${error.message}`);
+                        } else {
+                            log('✅ 已插入实时测试数据');
+                        }
+                    } catch (error) {
+                        log(`⚠️ 实时测试出错: ${error.message}`);
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                log(`❌ 实时测试失败: ${error.message}`);
+            }
+        }
+        
+        function resetTest() {
+            clearLog();
+            document.getElementById('supabaseUrl').value = '';
+            document.getElementById('supabaseKey').value = '';
+            supabaseClient = null;
+            log('🔄 测试已重置');
+            log('请重新填写Supabase信息');
+        }
+        
+        function updateEnvExample() {
+            const url = getSupabaseUrl();
+            const key = getSupabaseKey();
+            
+            if (url && key) {
+                envExample.textContent = `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${key}`;
+            }
+        }
+        
+        function copyEnvConfig() {
+            const text = envExample.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('✅ 环境变量配置已复制到剪贴板！\n\n请粘贴到项目根目录的 .env.local 文件中');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('复制失败，请手动复制');
+            });
+        }
+        
+        // 页面加载时检查是否有存储的配置
+        window.addEventListener('load', () => {
+            const savedUrl = localStorage.getItem('brickpush_supabase_url');
+            const savedKey = localStorage.getItem('brickpush_supabase_key');
+            
+            if (savedUrl) {
+                document.getElementById('supabaseUrl').value = savedUrl;
+            }
+            if (savedKey) {
+                document.getElementById('supabaseKey').value = savedKey;
+            }
+            
+            // 保存配置到localStorage
+            document.getElementById('supabaseUrl').addEventListener('change', function() {
+                localStorage.setItem('brickpush_supabase_url', this.value);
+            });
+            
+            document.getElementById('supabaseKey').addEventListener('change', function() {
+                localStorage.setItem('brickpush_supabase_key', this.value);
+            });
+            
+            log('🔧 Supabase连接测试页面已加载');
+            log('请按照步骤1-3操作');
+        });
+    </script>
+</body>
+</html>

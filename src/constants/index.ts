@@ -69,7 +69,7 @@ export const HEART_CONNECTION_REQUIRED = true; // 心心方块必须横竖连接
 
 // ---- Score display ----
 export const SCORE_DISPLAY_X = 20;
-export const SCORE_DISPLAY_Y = 50;
+export const SCORE_DISPLAY_Y = 0;
 
 // ---- Time limit ----
 export const TIME_LIMIT_SECONDS = 99;

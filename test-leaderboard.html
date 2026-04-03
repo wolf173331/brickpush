@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>排行榜持久化测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin: 20px 0;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+        .status-card {
+            background: white;
+            color: #333;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        .status {
+            display: inline-block;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .status-success {
+            background: #4CAF50;
+            color: white;
+        }
+        .status-info {
+            background: #2196F3;
+            color: white;
+        }
+        .test-section {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+        .test-button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: #2196F3;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .test-button:hover {
+            transform: translateY(-2px);
+        }
+        .test-button.warning {
+            background: #FF9800;
+        }
+        .test-button.danger {
+            background: #F44336;
+        }
+        .test-button.success {
+            background: #4CAF50;
+        }
+        .leaderboard-display {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .info-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        .info-box.warning {
+            border-left-color: #FF9800;
+        }
+        .section-title {
+            font-size: 1.5em;
+            margin: 30px 0 15px 0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 10px;
+        }
+        .localStorage-status {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .localStorage-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 20px;
+            }
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 排行榜持久化测试</h1>
+        <p class="subtitle">验证GitHub Pages排行榜本地存储功能</p>
+        
+        <div class="status-card">
+            <h2>修复状态</h2>
+            <div class="status status-success">✅ 已修复：排行榜使用localStorage</div>
+            <div class="status status-info">ℹ️ GitHub Pages不支持服务器API</div>
+            
+            <p><strong>问题描述</strong>：GitHub Pages是纯静态托管，不支持服务器端API，导致排行榜数据无法同步。</p>
+            <p><strong>解决方案</strong>：修改为使用浏览器localStorage存储排行榜数据。</p>
+        </div>
+        
+        <div class="test-section">
+            <h3 class="section-title">🔧 测试排行榜功能</h3>
+            
+            <div class="test-buttons">
+                <button class="test-button success" onclick="testLocalStorage()">测试localStorage</button>
+                <button class="test-button" onclick="testAddEntry()">添加测试记录</button>
+                <button class="test-button" onclick="testLoadLeaderboard()">加载排行榜</button>
+                <button class="test-button warning" onclick="testClearLeaderboard()">清空排行榜</button>
+                <button class="test-button danger" onclick="testClearAll()">清空localStorage</button>
+            </div>
+            
+            <div id="leaderboardDisplay" class="leaderboard-display">
+                // 排行榜数据将显示在这里
+                // 点击"加载排行榜"按钮查看
+            </div>
+            
+            <div class="test-buttons">
+                <button class="test-button success" onclick="simulateGameOver()">模拟游戏结束保存</button>
+                <button class="test-button" onclick="openGame()">打开游戏测试</button>
+            </div>
+        </div>
+        
+        <div class="info-box">
+            <h4>📋 技术实现</h4>
+            <ul>
+                <li><strong>存储键名</strong>: <code>brickpush:leaderboard</code></li>
+                <li><strong>存储位置</strong>: 浏览器localStorage</li>
+                <li><strong>数据格式</strong>: JSON数组，最多20条记录</li>
+                <li><strong>排序规则</strong>: 分数降序，时间升序</li>
+                <li><strong>名称限制</strong>: 1-10个英文字母</li>
+            </ul>
+        </div>
+        
+        <div class="info-box warning">
+            <h4>⚠️ 注意事项</h4>
+            <ul>
+                <li>localStorage是<b>浏览器本地存储</b>，不同浏览器/设备之间不共享</li>
+                <li>清除浏览器数据会删除排行榜记录</li>
+                <li>隐身模式下localStorage关闭后会被清除</li>
+                <li>每个玩家在自己的设备上有独立的排行榜</li>
+            </ul>
+        </div>
+        
+        <div class="test-section">
+            <h3 class="section-title">📊 localStorage状态</h3>
+            <div id="localStorageStatus" class="localStorage-status">
+                <!-- localStorage状态将动态更新 -->
+            </div>
+        </div>
+        
+        <div class="info-box">
+            <h4>🎮 游戏中的排行榜流程</h4>
+            <ol>
+                <li>游戏结束 → 显示分数和保存表单</li>
+                <li>输入名字 → 点击"确定保存"</li>
+                <li>数据保存到localStorage → 显示成功提示</li>
+                <li>进入排行榜场景 → 显示所有记录</li>
+                <li>记录按分数排序，最多显示20条</li>
+            </ol>
+        </div>
+    </div>
+    
+    <script>
+        const LEADERBOARD_KEY = 'brickpush:leaderboard';
+        const MAX_ENTRIES = 20;
+        
+        // 初始化显示
+        updateLocalStorageStatus();
+        
+        function sanitizeName(name) {
+            return String(name || '')
+                .replace(/[^A-Za-z]/g, '')
+                .slice(0, 10)
+                .toUpperCase();
+        }
+        
+        function loadLeaderboard() {
+            try {
+                const raw = localStorage.getItem(LEADERBOARD_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return [];
+                return parsed.filter(entry => 
+                    entry && 
+                    typeof entry.name === 'string' && 
+                    typeof entry.score === 'number' &&
+                    typeof entry.levelName === 'string' &&
+                    typeof entry.timestamp === 'number'
+                );
+            } catch {
+                return [];
+            }
+        }
+        
+        function saveLeaderboardEntry(name, score, levelName) {
+            const safeName = sanitizeName(name);
+            if (!safeName) return loadLeaderboard();
+            
+            const entries = [
+                ...loadLeaderboard(),
+                {
+                    name: safeName,
+                    score: Math.max(0, Math.floor(score)),
+                    levelName: levelName || 'ROUND-01',
+                    timestamp: Date.now()
+                }
+            ]
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return a.timestamp - b.timestamp;
+            })
+            .slice(0, MAX_ENTRIES);
+            
+            localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries));
+            return entries;
+        }
+        
+        function formatLeaderboard(entries) {
+            if (entries.length === 0) {
+                return '排行榜为空\n暂无记录';
+            }
+            
+            const lines = entries.map((entry, index) => {
+                const rank = `${index + 1}`.padStart(2, '0');
+                const name = entry.name.padEnd(10, ' ');
+                const score = `${entry.score}`.padStart(6, ' ');
+                const level = entry.levelName.slice(0, 10).padEnd(10, ' ');
+                const date = new Date(entry.timestamp).toLocaleDateString('zh-CN');
+                return `${rank}  ${name}  ${score}  ${level}  ${date}`;
+            });
+            
+            return 'RANK  NAME       SCORE  LEVEL       DATE\n' +
+                   '---------------------------------------------\n' +
+                   lines.join('\n');
+        }
+        
+        function testLocalStorage() {
+            const supported = typeof localStorage !== 'undefined';
+            const message = supported ? 
+                '✅ localStorage可用，当前浏览器支持本地存储' :
+                '❌ localStorage不可用，请使用现代浏览器';
+            alert(message);
+            updateLocalStorageStatus();
+        }
+        
+        function testAddEntry() {
+            const names = ['ALICE', 'BOB', 'CHARLIE', 'DAVID', 'EVE', 'FRANK', 'GRACE', 'HENRY', 'IVY', 'JACK'];
+            const name = names[Math.floor(Math.random() * names.length)];
+            const score = Math.floor(Math.random() * 5000);
+            const levels = ['ROUND-01', 'ROUND-02', 'ROUND-03', 'ROUND-04', 'ROUND-05'];
+            const levelName = levels[Math.floor(Math.random() * levels.length)];
+            
+            saveLeaderboardEntry(name, score, levelName);
+            testLoadLeaderboard();
+            updateLocalStorageStatus();
+            
+            alert(`✅ 添加测试记录成功\n\n名称: ${name}\n分数: ${score}\n关卡: ${levelName}`);
+        }
+        
+        function testLoadLeaderboard() {
+            const entries = loadLeaderboard();
+            const display = document.getElementById('leaderboardDisplay');
+            display.textContent = formatLeaderboard(entries);
+            updateLocalStorageStatus();
+        }
+        
+        function testClearLeaderboard() {
+            if (confirm('确定要清空排行榜吗？')) {
+                localStorage.removeItem(LEADERBOARD_KEY);
+                testLoadLeaderboard();
+                updateLocalStorageStatus();
+                alert('✅ 排行榜已清空');
+            }
+        }
+        
+        function testClearAll() {
+            if (confirm('确定要清空所有localStorage数据吗？\n这会影响所有使用localStorage的网站')) {
+                localStorage.clear();
+                testLoadLeaderboard();
+                updateLocalStorageStatus();
+                alert('✅ localStorage已清空');
+            }
+        }
+        
+        function simulateGameOver() {
+            const name = prompt('请输入你的名字（1-10个英文字母）:', 'PLAYER');
+            if (!name) return;
+            
+            const sanitized = sanitizeName(name);
+            if (!sanitized) {
+                alert('❌ 名称必须包含至少1个英文字母');
+                return;
+            }
+            
+            const score = Math.floor(Math.random() * 3000) + 1000;
+            const levels = ['ROUND-01', 'ROUND-02', 'ROUND-03'];
+            const levelName = levels[Math.floor(Math.random() * levels.length)];
+            
+            saveLeaderboardEntry(sanitized, score, levelName);
+            testLoadLeaderboard();
+            
+            alert(`🎮 游戏结束模拟\n\n恭喜 ${sanitized}！\n得分: ${score}\n关卡: ${levelName}\n\n记录已保存到排行榜！`);
+        }
+        
+        function openGame() {
+            window.open('https://wolf173331.github.io/brickpush/', '_blank');
+        }
+        
+        function updateLocalStorageStatus() {
+            const container = document.getElementById('localStorageStatus');
+            if (!container) return;
+            
+            const keys = Object.keys(localStorage);
+            const totalSize = keys.reduce((total, key) => {
+                return total + (localStorage.getItem(key) || '').length;
+            }, 0);
+            
+            const leaderboardData = loadLeaderboard();
+            const leaderboardCount = leaderboardData.length;
+            
+            container.innerHTML = `
+                <div class="localStorage-item">
+                    <strong>总键值对</strong><br>
+                    ${keys.length} 个
+                </div>
+                <div class="localStorage-item">
+                    <strong>存储大小</strong><br>
+                    ${(totalSize / 1024).toFixed(2)} KB
+                </div>
+                <div class="localStorage-item">
+                    <strong>排行榜记录</strong><br>
+                    ${leaderboardCount} / ${MAX_ENTRIES} 条
+                </div>
+                <div class="localStorage-item">
+                    <strong>支持情况</strong><br>
+                    ${typeof localStorage !== 'undefined' ? '✅ 支持' : '❌ 不支持'}
+                </div>
+            `;
+        }
+        
+        // 页面加载时自动加载排行榜
+        window.addEventListener('load', () => {
+            testLoadLeaderboard();
+            updateLocalStorageStatus();
+        });
+        
+        // 监听storage变化
+        window.addEventListener('storage', updateLocalStorageStatus);
+    </script>
+</body>
+</html>

@@ -215,21 +215,22 @@ export class GameScene extends Scene {
     globalTheme.setTheme('retro');
     this.currentLevelIndex = getCurrentLevelIndex();
 
-    // 添加自定义事件监听器处理下一关按钮点击
-    const nextLevelHandler = () => {
-      this.goToNextLevel(world);
-    };
-
-    globalEventBus.on('custom:nextlevel', nextLevelHandler);
-    this.touchHandlers.push({ evt: 'custom:nextlevel', fn: nextLevelHandler });
-
     this.resetState();
+    this.registerNextLevelHandler(world);
     this.parseLevel();
     this.createFloor(world);
     this.createEntitiesFromGrid(world);
     this.createHUD(world);
     this.createReadyOverlay(world);
     this.createTouchControls(world);
+  }
+
+  private registerNextLevelHandler(world: IWorld): void {
+    const nextLevelHandler = () => {
+      this.goToNextLevel(world);
+    };
+    globalEventBus.on('custom:nextlevel', nextLevelHandler);
+    this.touchHandlers.push({ evt: 'custom:nextlevel', fn: nextLevelHandler });
   }
 
   // ------------------------------------------------------------------
@@ -792,9 +793,9 @@ export class GameScene extends Scene {
 
     // Heart merge status (中央上方，得分下方)
     this.heartStatusEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-center', y: SCORE_DISPLAY_Y + 60, width: 300, height: 30 })
+      .withUITransform({ anchor: 'top-right',x: -5, y: SCORE_DISPLAY_Y + 130, width: 105, height: 300 })
       .withText({
-        text: '♥×3 集合通关!',
+        text: '将♥×3\n连成一线\n或全灭敌人!',
         fontSize: 20,
         color: PALETTE.HEART_RED,
         align: 'center',
@@ -1834,7 +1835,7 @@ export class GameScene extends Scene {
     const connected = this.checkHeartsConnected();
     const statusText = connected
       ? '♥ 已集合!'
-      : `♥×${heartCount} 推到一起通关!`;
+      : `♥×${heartCount} \n连成一线\n通关!`;
     this.setUIText(world, this.heartStatusEntity, statusText);
 
     // Update level display
@@ -2127,11 +2128,13 @@ export class GameScene extends Scene {
     this.currentLevelIndex++;
     setCurrentLevelIndex(this.currentLevelIndex);
     this.resetState();
+    this.registerNextLevelHandler(world);
     this.parseLevel();
     this.createFloor(world);
     this.createEntitiesFromGrid(world);
     this.createHUD(world);
     this.createReadyOverlay(world);
+    this.createTouchControls(world);
     this.phase = 'ready';
     this.readyTimer = READY_DURATION;
     this.completionHandled = false;

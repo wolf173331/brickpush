@@ -40,7 +40,7 @@ export class GameOverScene extends Scene {
       UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: -180, width: 500, height: 70 })
         .withText({
-          text: '关卡通关!',
+          text: '当前关卡通关!',
           fontSize: 48,
           color: PALETTE.LEVEL_COMPLETE_GOLD,
           align: 'center',
