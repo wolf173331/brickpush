@@ -9,11 +9,9 @@ import {
   TransformComponent,
   SpriteComponent,
   TextComponent,
-  UITextComponent,
   TRANSFORM_COMPONENT,
   SPRITE_COMPONENT,
   TEXT_COMPONENT,
-  UI_TEXT_COMPONENT,
   Easing,
   Time,
   KEYS,
@@ -40,7 +38,6 @@ import {
   PLAYER_MOVE_COOLDOWN,
   PLAYER_MOVE_TWEEN_DURATION,
   PLAYER_MAX_HP,
-  PLAYER_DAMAGE_COOLDOWN,
   PLAYER_PUSH_DISTANCE,
   PLAYER_MAX_PUSH_DISTANCE,
   ENEMY_MOVE_INTERVAL_MIN,
@@ -57,24 +54,16 @@ import {
   SCORE_WALL_BREAK,
   SCORE_STAR_BREAK,
   SCORE_HEART_MERGE,
-  COMBO_WINDOW,
-  COMBO_BASE_KILL,
-  COMBO_INCREMENT,
-  COMBO_MAX,
   calcTimeBonusScore,
-  HEARTS_NEEDED_FOR_WIN,
   READY_DURATION,
   ENEMY_SPAWN_ACTIVATE_DELAY,
   TIME_LIMIT_SECONDS,
-  TIME_WARNING_THRESHOLD,
   getLevelTimeLimit,
-  Z_FLOOR,
   Z_WALL,
   Z_BLOCK,
   Z_ITEM,
   Z_ENEMY,
   Z_PLAYER,
-  Z_UI,
   Z_UI_POPUP,
   Z_SCORE_POPUP,
   PALETTE,
@@ -86,78 +75,32 @@ import {
   gridKey,
   inBounds,
   ALL_DIRECTIONS,
-  HUD_TOP_Y,
-  HUD_PADDING_X,
   isNpcSquirrelEnabled,
   NPC_HP,
   NPC_MOVE_COOLDOWN_MIN,
   NPC_MOVE_COOLDOWN_MAX,
-  NPC_STUN_DURATION,
-} from '../constants';
+} from '../config';
 import { getRunHp, getRunScore, setRunHp, setRunScore } from '../gameProgress';
 import { gameAudio } from '../audio';
+import type { PlayerState, EnemyState, NpcState, BombState, GamePhase, VictoryType } from '../entity/types';
+import { parseLevel, createFloor } from '../game/GridSystem';
+import { resolveEnemySpawnCells } from '../game/EnemySpawner';
+import { checkHeartsConnected } from '../game/WinCondition';
+import {
+  killEnemyScore as _killEnemyScore, spawnScorePopup as _spawnScorePopup,
+  damagePlayer as _damagePlayer, damageNpc as _damageNpc,
+  type ComboState,
+} from '../game/CombatSystem';
+import {
+  createHUD as _createHUD, createReadyOverlay as _createReadyOverlay,
+  updateHUD as _updateHUD,
+  type HudEntities,
+} from '../game/HudSystem';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
 
 // ---- State interfaces ----
-
-interface PlayerState {
-  col: number;
-  row: number;
-  entity: EntityId;
-  moving: boolean;
-  cooldown: number;
-  score: number;
-  collectibles: number;
-  hp: number;
-  damageCooldown: number;
-  isInvincible: boolean;
-  pushDistance: number; // 当前推动距离
-  canBreakWalls: boolean;
-  inputLockTimer: number; // 受伤后短暂锁定输入
-}
-
-interface EnemyState {
-  col: number;
-  row: number;
-  entity: EntityId;
-  type: number;
-  active: boolean;
-  moveCooldown: number;
-  stunTimer: number;
-  activateTimer: number;
-  dying: boolean; // 死亡动画播放中，不参与碰撞
-}
-
-interface NpcState {
-  col: number;
-  row: number;
-  entity: EntityId;
-  hp: number;
-  cooldown: number;
-  stunTimer: number;
-  moving: boolean;
-  damageCooldown: number;
-  isInvincible: boolean;
-}
-
-interface BombState {
-  col: number;
-  row: number;
-  entity: EntityId;
-  exploded: boolean;
-}
-
-interface SpawnCandidate {
-  col: number;
-  row: number;
-  bucket: number;
-  nearbyObstacles: number;
-}
-
-type GamePhase = 'ready' | 'playing' | 'complete';
-type VictoryType = 'hearts' | 'enemies' | 'none';
 
 // ---- Helpers ----
 function randomEnemyCooldown(): number {
@@ -199,18 +142,25 @@ export class GameScene extends Scene {
   private bombs: BombState[] = [];
 
   // ---- HUD entity references ----
-  private enemyCountEntity: EntityId = 0;
-  private heartStatusEntity: EntityId = 0;
-  private scoreEntity: EntityId = 0;
-  private collectEntity: EntityId = 0;
-  private hpEntity: EntityId = 0;
-  private scoreDisplayEntity: EntityId = 0;
-  private timeDisplayEntity: EntityId = 0;
-  private levelDisplayEntity: EntityId = 0;
+  private hudEntities: HudEntities = {
+    hpEntity: 0 as EntityId,
+    scoreDisplayEntity: 0 as EntityId,
+    timeDisplayEntity: 0 as EntityId,
+    levelDisplayEntity: 0 as EntityId,
+    heartStatusEntity: 0 as EntityId,
+    enemyCountEntity: 0 as EntityId,
+    scoreEntity: 0 as EntityId,
+    collectEntity: 0 as EntityId,
+    readyEntity: 0 as EntityId,
+  };
   private readyEntity: EntityId = 0;
 
-  // ---- Victory UI entities ----
-  private victoryUIEntities: EntityId[] = [];
+  // ---- Combo (delegated to CombatSystem) ----
+  private combo: ComboState = { count: 0, timer: 0 };
+  private get comboCount(): number { return this.combo.count; }
+  private set comboCount(v: number) { this.combo.count = v; }
+  private get comboTimer(): number { return this.combo.timer; }
+  private set comboTimer(v: number) { this.combo.timer = v; }
 
   // ---- Non-grid entities (floor, background, effects, etc.) ----
   private nonGridEntities?: Set<EntityId>;
@@ -236,9 +186,8 @@ export class GameScene extends Scene {
   private touchDir: { dc: number; dr: number } | null = null;
   private touchHandlers: Array<{ evt: string; fn: () => void }> = [];
 
-  // ---- Combo ----
-  private comboCount = 0;       // 当前连杀数
-  private comboTimer = 0;       // 距上次杀怪的计时
+  // ---- Victory UI entities ----
+  private victoryUIEntities: EntityId[] = [];
 
   // ------------------------------------------------------------------
   // onEnter
@@ -292,6 +241,7 @@ export class GameScene extends Scene {
     this.victoryUIEntities = [];
     this.comboCount = 0;
     this.comboTimer = 0;
+    this.combo = { count: 0, timer: 0 };
     this.totalWaves = 1;
     this.enemiesPerWave = 3;
     this.currentWave = 0;
@@ -303,106 +253,11 @@ export class GameScene extends Scene {
   // Parse level into grid
   // ------------------------------------------------------------------
   private parseLevel(): void {
-    // Ensure levels are loaded
-    if (LEVELS.length === 0) {
-      console.warn('No levels loaded, loading default levels...');
-      // Fallback to hardcoded level
-      this.parseLevelFromGrid([
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 1],
-        [1, 11, 6, 2, 4, 2, 0, 0, 0, 2, 0, 2, 6, 11, 1],
-        [1, 11, 2, 0, 2, 0, 5, 0, 2, 0, 2, 0, 2, 11, 1],
-        [1, 11, 2, 0, 0, 2, 0, 0, 0, 2, 4, 0, 2, 11, 1],
-        [1, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 1],
-        [1, 11, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 11, 1],
-        [1, 11, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 11, 1],
-        [1, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 1],
-        [1, 11, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 11, 1],
-        [1, 11, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 11, 1],
-        [1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-      ]);
-      return;
-    }
-
-    // Clamp level index to valid range
-    const levelIndex = Math.max(0, Math.min(this.currentLevelIndex, LEVELS.length - 1));
-    const level = LEVELS[levelIndex];
-
-    this.parseLevelFromGrid(level.grid);
+    parseLevel({ grid: this.grid, safeZones: this.safeZones, outerGrassZones: this.outerGrassZones, trackEntity: (eid) => this.trackEntity(eid) }, this.currentLevelIndex);
   }
 
-  private parseLevelFromGrid(levelGrid: number[][]): void {
-    for (let r = 0; r < GRID_ROWS; r++) {
-      this.grid[r] = [];
-      for (let c = 0; c < GRID_COLS; c++) {
-        const cell = levelGrid[r][c];
-        const isOuterRing = r === 0 || r === GRID_ROWS - 1 || c === 0 || c === GRID_COLS - 1;
-
-        // 最外圈无论 JSON 里存的是什么，一律强制为草地安全区
-        if (isOuterRing) {
-          this.grid[r][c] = CELL_SAFE;
-          const key = gridKey(c, r);
-          this.safeZones.add(key);
-          this.outerGrassZones.add(key);
-          continue;
-        }
-
-        switch (cell) {
-          case CELL_WALL:
-            this.grid[r][c] = CELL_WALL;
-            break;
-          case CELL_ITEM:
-            this.grid[r][c] = CELL_ITEM;
-            break;
-          case CELL_BLOCK:
-          case CELL_STAR_BLOCK:
-          case CELL_HEART_BLOCK:
-          case CELL_BOMB:
-          case CELL_P1_SPAWN:
-          case CELL_ENEMY_SPAWN:
-            this.grid[r][c] = cell;
-            break;
-          case CELL_SAFE:
-            this.grid[r][c] = CELL_SAFE;
-            this.safeZones.add(gridKey(c, r));
-            break;
-          default:
-            this.grid[r][c] = CELL_EMPTY;
-            break;
-        }
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Create floor tiles
-  // ------------------------------------------------------------------
   private createFloor(world: IWorld): void {
-    // 创建背景层
-    this.trackEntity(
-      EntityBuilder.create(world, W, H)
-        .withBackground({ color: PALETTE.BACKGROUND })
-        .build()
-    );
-
-    // 创建地板层
-    for (let r = 0; r < GRID_ROWS; r++) {
-      for (let c = 0; c < GRID_COLS; c++) {
-        const pos = gridToWorld(c, r);
-        this.trackEntity(
-          EntityBuilder.create(world, W, H)
-            .withTransform({ x: pos.x, y: pos.y })
-            .withSprite({
-              textureId: this.outerGrassZones.has(gridKey(c, r)) ? ASSETS.GRASS : ASSETS.FLOOR,
-              width: TILE_SIZE,
-              height: TILE_SIZE,
-              zIndex: Z_FLOOR,
-            })
-            .build()
-        );
-      }
-    }
+    createFloor(world, { grid: this.grid, safeZones: this.safeZones, outerGrassZones: this.outerGrassZones, trackEntity: (eid) => this.trackEntity(eid) });
   }
 
   // ------------------------------------------------------------------
@@ -553,294 +408,26 @@ export class GameScene extends Scene {
   }
 
   private resolveEnemySpawnCells(count: number): Array<{ col: number; row: number }> {
-    const candidates: SpawnCandidate[] = [];
-    for (let r = 2; r < GRID_ROWS - 2; r++) {
-      for (let c = 2; c < GRID_COLS - 2; c++) {
-        if (this.grid[r][c] !== CELL_EMPTY) continue;
-        const baseExits = this.countEnemySpawnExits([], c, r);
-        if (baseExits <= 0) continue;
-        candidates.push({
-          col: c,
-          row: r,
-          bucket: this.getSpawnBucket(r),
-          nearbyObstacles: this.countNearbyObstacles(c, r),
-        });
-      }
-    }
-
-    const targetBuckets = this.getTargetSpawnBucketCounts(count, candidates);
-    const targetVariants = this.getTargetBucketVariants(targetBuckets);
-
-    for (const target of targetVariants) {
-      const picked = this.tryBuildEnemySpawnSet(candidates, count, target);
-      if (picked.length === count) {
-        return picked;
-      }
-    }
-
-    return candidates.slice(0, count).map((candidate) => ({ col: candidate.col, row: candidate.row }));
-  }
-
-  private tryBuildEnemySpawnSet(
-    candidates: SpawnCandidate[],
-    count: number,
-    targetBuckets: [number, number, number]
-  ): Array<{ col: number; row: number }> {
-    const baseSeed = (this.currentLevelIndex + 1) * 9973 + count * 37;
-
-    for (let attempt = 0; attempt < 80; attempt++) {
-      let state = (baseSeed + attempt * 7919) >>> 0;
-      const nextRandom = (): number => {
-        state = (state * 1664525 + 1013904223) >>> 0;
-        return state / 0x100000000;
-      };
-
-      const chosen: Array<{ col: number; row: number }> = [];
-      const bucketCounts: [number, number, number] = [0, 0, 0];
-
-      while (chosen.length < count) {
-        const need = targetBuckets.map((target, idx) => Math.max(0, target - bucketCounts[idx])) as [number, number, number];
-        const preferredBuckets = new Set(need.flatMap((value, idx) => (value > 0 ? [idx] : [])));
-        const remaining = candidates.filter(
-          (candidate) => !chosen.some((pick) => pick.col === candidate.col && pick.row === candidate.row)
-        );
-
-        const ranked = this.rankEnemySpawnCandidates(
-          remaining.filter((candidate) => preferredBuckets.size === 0 || preferredBuckets.has(candidate.bucket)),
-          chosen,
-          need,
-          nextRandom
-        );
-        const fallback = ranked.length > 0 ? ranked : this.rankEnemySpawnCandidates(remaining, chosen, need, nextRandom);
-        if (fallback.length === 0) break;
-
-        const pick = fallback[0];
-        chosen.push({ col: pick.col, row: pick.row });
-        bucketCounts[pick.bucket]++;
-      }
-
-      if (chosen.length === count && this.countTrappedEnemySpawns(chosen) <= 2) {
-        return chosen;
-      }
-    }
-
-    return [];
-  }
-
-  private rankEnemySpawnCandidates(
-    candidates: SpawnCandidate[],
-    chosen: Array<{ col: number; row: number }>,
-    need: [number, number, number],
-    nextRandom: () => number
-  ): SpawnCandidate[] {
-    return candidates
-      .map((candidate) => {
-        const projected = [...chosen, { col: candidate.col, row: candidate.row }];
-        const trapped = this.countTrappedEnemySpawns(projected);
-        if (trapped > 2) {
-          return null;
-        }
-
-        const exits = this.countEnemySpawnExits(projected, candidate.col, candidate.row);
-        const minDistance = chosen.length === 0
-          ? 6
-          : Math.min(
-            ...chosen.map((pick) => Math.abs(pick.col - candidate.col) + Math.abs(pick.row - candidate.row))
-          );
-        const distToPlayer = this.player
-          ? Math.abs(this.player.col - candidate.col) + Math.abs(this.player.row - candidate.row)
-          : Math.abs(7 - candidate.col) + Math.abs(6 - candidate.row);
-
-        const score =
-          need[candidate.bucket] * 110 +
-          Math.min(exits, 4) * 34 +
-          Math.min(minDistance, 6) * 18 +
-          Math.min(distToPlayer, 8) * 4 +
-          Math.min(candidate.nearbyObstacles, 5) * 5 -
-          Math.abs(candidate.row - 6) * 2 -
-          trapped * 12 +
-          (nextRandom() * 12 - 6);
-
-        return { candidate, score };
-      })
-      .filter((entry): entry is { candidate: SpawnCandidate; score: number } => entry !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 4)
-      .map((entry) => entry.candidate);
-  }
-
-  private countEnemySpawnExits(occupied: Array<{ col: number; row: number }>, col: number, row: number): number {
-    let exits = 0;
-    for (const dir of ALL_DIRECTIONS) {
-      const nc = col + dir.dc;
-      const nr = row + dir.dr;
-      if (!inBounds(nc, nr)) continue;
-      if (this.grid[nr][nc] !== CELL_EMPTY) continue;
-      const blockedByEnemy = occupied.some((enemy) => enemy.col === nc && enemy.row === nr);
-      if (!blockedByEnemy) {
-        exits++;
-      }
-    }
-    return exits;
-  }
-
-  private countTrappedEnemySpawns(spawns: Array<{ col: number; row: number }>): number {
-    return spawns.reduce((total, spawn) => {
-      const occupied = spawns.filter((other) => other !== spawn);
-      return total + (this.countEnemySpawnExits(occupied, spawn.col, spawn.row) <= 2 ? 1 : 0);
-    }, 0);
-  }
-
-  private getSpawnBucket(row: number): number {
-    if (row <= 4) return 0;
-    if (row <= 7) return 1;
-    return 2;
-  }
-
-  private countNearbyObstacles(col: number, row: number): number {
-    let total = 0;
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (dc === 0 && dr === 0) continue;
-        const nc = col + dc;
-        const nr = row + dr;
-        if (!inBounds(nc, nr)) continue;
-        if (this.grid[nr][nc] !== CELL_EMPTY) {
-          total++;
-        }
-      }
-    }
-    return total;
-  }
-
-  private getTargetSpawnBucketCounts(
-    count: number,
-    candidates: SpawnCandidate[]
-  ): [number, number, number] {
-    const capacity: [number, number, number] = [0, 0, 0];
-    for (const candidate of candidates) {
-      capacity[candidate.bucket]++;
-    }
-
-    const target: [number, number, number] = [
-      Math.floor(count / 3),
-      Math.floor(count / 3),
-      Math.floor(count / 3),
-    ];
-    const remainder = count % 3;
-    const order = [0, 2, 1];
-    for (let i = 0; i < remainder; i++) {
-      target[order[i]]++;
-    }
-
-    let overflow = 0;
-    for (let i = 0; i < target.length; i++) {
-      if (target[i] > capacity[i]) {
-        overflow += target[i] - capacity[i];
-        target[i] = capacity[i];
-      }
-    }
-
-    while (overflow > 0) {
-      const bestBucket = [0, 1, 2].reduce((best, current) => {
-        const bestRoom = capacity[best] - target[best];
-        const currentRoom = capacity[current] - target[current];
-        return currentRoom > bestRoom ? current : best;
-      }, 0);
-      if (capacity[bestBucket] <= target[bestBucket]) break;
-      target[bestBucket]++;
-      overflow--;
-    }
-
-    return target;
-  }
-
-  private getTargetBucketVariants(target: [number, number, number]): Array<[number, number, number]> {
-    const variants: Array<[number, number, number]> = [target];
-    const swaps: Array<[number, number]> = [
-      [0, 1],
-      [1, 2],
-      [0, 2],
-    ];
-
-    for (const [from, to] of swaps) {
-      if (target[from] <= 0) continue;
-      variants.push(
-        target.map((value, idx) => {
-          if (idx === from) return value - 1;
-          if (idx === to) return value + 1;
-          return value;
-        }) as [number, number, number]
-      );
-    }
-
-    return variants.filter((variant, idx, list) => {
-      if (variant.some((value) => value < 0)) return false;
-      return list.findIndex((other) => other.every((value, i) => value === variant[i])) === idx;
-    });
+    return resolveEnemySpawnCells({
+      grid: this.grid,
+      playerCol: this.player?.col ?? 7,
+      playerRow: this.player?.row ?? 6,
+      levelIndex: this.currentLevelIndex,
+    }, count);
   }
 
   // ------------------------------------------------------------------
-  // HUD (single-player)
+  // HUD (single-player) - delegates to HudSystem
   // ------------------------------------------------------------------
   private createHUD(world: IWorld): void {
-    // HUD 背景条
-    this.trackEntity(
-      EntityBuilder.create(world, W, H)
-        .withTransform({ x: W / 2, y: HUD_TOP_Y + 10, screenSpace: true })
-        .withSprite({ color: PALETTE.HUD_BG, width: W, height: 52, zIndex: Z_UI })
-        .build()
-    );
-
-    // 左：HP（用实际 HP 初始化，避免进入下一关时显示错误）
     const initHp = this.player?.hp ?? getRunHp();
-    const initHearts = '♥'.repeat(Math.max(0, initHp));
-    const initEmpty  = '♡'.repeat(Math.max(0, PLAYER_MAX_HP - initHp));
-    this.hpEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-left', x: HUD_PADDING_X, y: 6, width: 160, height: 36 })
-      .withText({ text: `HP: ${initHearts}${initEmpty}`, fontSize: 22, color: 0xff6666, align: 'left' })
-      .build();
-    this.trackEntity(this.hpEntity);
-
-    // 中：得分
-    this.scoreDisplayEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-center', y: 6, width: 280, height: 36 })
-      .withText({ text: '得分: 0', fontSize: 24, color: PALETTE.SCORE_GOLD, align: 'center' })
-      .build();
-    this.trackEntity(this.scoreDisplayEntity);
-
-    // 右上：倒计时（突出显示）
-    const initTime = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
-    this.timeDisplayEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-right', x: -HUD_PADDING_X, y: 4, width: 130, height: 40 })
-      .withText({ text: `⏱ ${initTime}`, fontSize: 26, color: PALETTE.SCORE_CYAN, align: 'right' })
-      .build();
-    this.trackEntity(this.timeDisplayEntity);
-
-    // 右下：关卡
-    this.levelDisplayEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-right', x: -HUD_PADDING_X, y: 46, width: 130, height: 26 })
-      .withText({ text: `关卡: 1`, fontSize: 16, color: PALETTE.SCORE_CYAN, align: 'right' })
-      .build();
-    this.trackEntity(this.levelDisplayEntity);
-
-    // 右侧中部：心心提示
-    this.heartStatusEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'top-right', x: -5, y: 90, width: 110, height: 80 })
-      .withText({ text: '将♥\n连成一线!', fontSize: 16, color: PALETTE.HEART_RED, align: 'center' })
-      .build();
-    this.trackEntity(this.heartStatusEntity);
+    this.hudEntities = _createHUD(world, this.currentLevelIndex, initHp, (eid) => this.trackEntity(eid));
   }
-
   // ------------------------------------------------------------------
-  // READY overlay
+  // READY overlay - delegates to HudSystem
   // ------------------------------------------------------------------
   private createReadyOverlay(world: IWorld): void {
-    this.readyEntity = UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'center', width: 400, height: 80 })
-      .withText({ text: 'READY', fontSize: 52, color: PALETTE.READY_TEXT, align: 'center' })
-      .build();
-    this.trackEntity(this.readyEntity);
+    this.readyEntity = _createReadyOverlay(world, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
@@ -1652,13 +1239,7 @@ export class GameScene extends Scene {
 
   /** 统一处理杀怪得分，含 combo 计算 */
   private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number): void {
-    this.comboCount++;
-    this.comboTimer = COMBO_WINDOW;
-    const score = Math.min(COMBO_BASE_KILL + (this.comboCount - 1) * COMBO_INCREMENT, COMBO_MAX);
-    p.score += score;
-    const color = this.comboCount >= 3 ? 0xff4400 : PALETTE.SCORE_GOLD;
-    const label = this.comboCount >= 2 ? `COMBO×${this.comboCount}  +${score}` : `+${score}`;
-    this.spawnScorePopup(world, ec, er, score, color, label);
+    _killEnemyScore(world, p, this.combo, ec, er, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
@@ -1745,31 +1326,8 @@ export class GameScene extends Scene {
     this.spawnItemAt(world, c, r, ASSETS.ITEM_YELLOW);
   }
 
-  // ------------------------------------------------------------------
-  // Spawn score popup
-  // ------------------------------------------------------------------
   private spawnScorePopup(world: IWorld, c: number, r: number, value: number, color: number, label?: string): void {
-    const pos = gridToWorld(c, r);
-    const text = label ?? `+${value}`;
-    const fontSize = label ? 16 : 18;
-    const eid = EntityBuilder.create(world, W, H)
-      .withTransform({ x: pos.x, y: pos.y })
-      .withText({ text, fontSize, color, align: 'center', zIndex: Z_SCORE_POPUP })
-      .build();
-    this.trackEntity(eid);
-
-    const transform = world.getComponent<TransformComponent>(eid, TRANSFORM_COMPONENT);
-    if (transform) {
-      globalTweens.to(transform, { y: pos.y - 48 }, {
-        duration: 0.9,
-        easing: Easing.easeOutQuad,
-        onComplete: () => { world.destroyEntity(eid); },
-      });
-    }
-    const textComp = world.getComponent<TextComponent>(eid, TEXT_COMPONENT);
-    if (textComp) {
-      globalTweens.to(textComp, { alpha: 0 }, { duration: 0.9, easing: Easing.linear });
-    }
+    _spawnScorePopup(world, c, r, value, color, label, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
@@ -1996,30 +1554,7 @@ export class GameScene extends Scene {
   }
 
   private damageNpc(world: IWorld, npc: NpcState): void {
-    if (npc.isInvincible) return;
-    npc.hp = Math.max(0, npc.hp - 1);
-    npc.damageCooldown = PLAYER_DAMAGE_COOLDOWN;
-    npc.isInvincible = true;
-    npc.stunTimer = NPC_STUN_DURATION;
-
-    // 闪烁效果
-    const sprite = world.getComponent<SpriteComponent>(npc.entity, SPRITE_COMPONENT);
-    if (sprite) {
-      let flashes = 0;
-      const flash = () => {
-        flashes++;
-        sprite.alpha = flashes % 2 === 1 ? 0.2 : 1.0;
-        if (flashes < 6) {
-          globalTweens.to(sprite, { alpha: flashes % 2 === 1 ? 1.0 : 0.2 }, {
-            duration: 0.07, easing: Easing.easeOutQuad, onComplete: flash,
-          });
-        } else {
-          sprite.alpha = 0.5;
-          globalTweens.to(sprite, { alpha: 1.0 }, { duration: PLAYER_DAMAGE_COOLDOWN - 0.5, easing: Easing.easeOutQuad });
-        }
-      };
-      flash();
-    }
+    _damageNpc(world, npc);
   }
 
   private updateWaves(world: IWorld, dt: number): void {
@@ -2313,207 +1848,22 @@ export class GameScene extends Scene {
   // HUD update
   // ------------------------------------------------------------------
   private updateHUD(world: IWorld): void {
-    this.setUIText(world, this.enemyCountEntity, `敌人: ${this.enemies.length}`);
-
-    const p = this.player;
-    if (p) {
-      this.setUIText(world, this.scoreEntity, `${p.score}`);
-      this.setUIText(world, this.collectEntity, `★ ${p.collectibles}/10`);
-
-      // Update large score display
-      this.setUIText(world, this.scoreDisplayEntity, `得分: ${p.score}`);
-
-      // Update HP display
-      const hearts = '♥'.repeat(Math.max(0, p.hp));
-      const emptyHearts = '♡'.repeat(Math.max(0, PLAYER_MAX_HP - p.hp));
-      const hpColor = p.hp <= 1 ? 0xff4444 : (p.hp === 2 ? 0xffaa44 : 0x44ff44);
-      this.setUIText(world, this.hpEntity, `HP: ${hearts}${emptyHearts}`);
-
-      // Update HP text color
-      const uiText = world.getComponent<UITextComponent>(this.hpEntity, UI_TEXT_COMPONENT);
-      if (uiText) {
-        uiText.color = hpColor;
-      }
-    }
-
-    // Update time display
-    const timeSeconds = Math.max(0, Math.floor(this.timeLeft));
-    const isWarning = timeSeconds <= TIME_WARNING_THRESHOLD;
-    const timeColor = isWarning ? 0xff2222 : (timeSeconds <= 30 ? 0xffaa00 : PALETTE.SCORE_CYAN);
-    this.setUIText(world, this.timeDisplayEntity, `⏱ ${timeSeconds}`);
-
-    const timeUiText = world.getComponent<UITextComponent>(this.timeDisplayEntity, UI_TEXT_COMPONENT);
-    if (timeUiText) {
-      timeUiText.color = timeColor;
-    }
-
-    // 警告阶段：每秒脉冲缩放
-    const timeTransform = world.getComponent<TransformComponent>(this.timeDisplayEntity, TRANSFORM_COMPONENT);
-    if (timeTransform && isWarning) {
-      const pulse = 1 + 0.18 * Math.abs(Math.sin(this.timeLeft * Math.PI));
-      timeTransform.scaleX = pulse;
-      timeTransform.scaleY = pulse;
-    } else if (timeTransform) {
-      timeTransform.scaleX = 1;
-      timeTransform.scaleY = 1;
-    }
-
-    // Update heart status hint
-    const heartCount = this.countHearts();
-    const connected = this.checkHeartsConnected();
-    const statusText = connected
-      ? '♥ 已集合!'
-      : `♥×${heartCount} \n连成一线\n通关!`;
-    this.setUIText(world, this.heartStatusEntity, statusText);
-
-    // Update level display
-    const displayLevel = this.currentLevelIndex + 1; // 显示从1开始的关卡号
-    this.setUIText(world, this.levelDisplayEntity, `关卡: ${displayLevel}`);
-
-    // Update push distance display (debug/info)
-    if (p && p.pushDistance > PLAYER_PUSH_DISTANCE) {
-      // 如果推动距离大于默认值，可以在UI中显示（可选）
-      // 例如在HP旁边显示推动距离
-    }
-  }
-
-  private setUIText(world: IWorld, entity: EntityId, text: string): void {
-    const uiText = world.getComponent<UITextComponent>(entity, UI_TEXT_COMPONENT);
-    if (uiText) { uiText.setText(text); return; }
-    const tc = world.getComponent<TextComponent>(entity, TEXT_COMPONENT);
-    if (tc) { tc.text = text; }
+    _updateHUD(world, this.hudEntities, this.player, this.enemies, this.timeLeft, this.currentLevelIndex, this.grid);
   }
 
   // ------------------------------------------------------------------
-  // Heart victory: check if 3+ heart blocks are all connected
+  // Heart victory - delegates to WinCondition module
   // ------------------------------------------------------------------
-  private countHearts(): number {
-    let count = 0;
-    for (let r = 0; r < GRID_ROWS; r++) {
-      for (let c = 0; c < GRID_COLS; c++) {
-        if (this.grid[r][c] === CELL_HEART_BLOCK) count++;
-      }
-    }
-    return count;
-  }
-
-  private checkHeartsConnected(): boolean {
-    // Find all heart positions
-    const hearts: Array<{ c: number; r: number }> = [];
-    for (let r = 0; r < GRID_ROWS; r++) {
-      for (let c = 0; c < GRID_COLS; c++) {
-        if (this.grid[r][c] === CELL_HEART_BLOCK) {
-          hearts.push({ c, r });
-        }
-      }
-    }
-    if (hearts.length < HEARTS_NEEDED_FOR_WIN) return false;
-
-    // 按行分组
-    const heartsByRow = new Map<number, Array<{ c: number; r: number }>>();
-    // 按列分组
-    const heartsByCol = new Map<number, Array<{ c: number; r: number }>>();
-
-    for (const heart of hearts) {
-      // 添加到行分组
-      if (!heartsByRow.has(heart.r)) {
-        heartsByRow.set(heart.r, []);
-      }
-      heartsByRow.get(heart.r)!.push(heart);
-
-      // 添加到列分组
-      if (!heartsByCol.has(heart.c)) {
-        heartsByCol.set(heart.c, []);
-      }
-      heartsByCol.get(heart.c)!.push(heart);
-    }
-
-    // 检查是否有至少HEARTS_NEEDED_FOR_WIN个心心方块在同一行且连续
-    for (const [, rowHearts] of heartsByRow) {
-      if (rowHearts.length >= HEARTS_NEEDED_FOR_WIN) {
-        // 按X坐标排序
-        rowHearts.sort((a, b) => a.c - b.c);
-
-        // 检查连续的心心方块
-        let consecutiveCount = 1;
-        for (let i = 1; i < rowHearts.length; i++) {
-          if (rowHearts[i].c === rowHearts[i - 1].c + 1) {
-            consecutiveCount++;
-            if (consecutiveCount >= HEARTS_NEEDED_FOR_WIN) {
-              return true;
-            }
-          } else {
-            consecutiveCount = 1; // 重新开始计数
-          }
-        }
-      }
-    }
-
-    // 检查是否有至少HEARTS_NEEDED_FOR_WIN个心心方块在同一列且连续
-    for (const [, colHearts] of heartsByCol) {
-      if (colHearts.length >= HEARTS_NEEDED_FOR_WIN) {
-        // 按Y坐标排序
-        colHearts.sort((a, b) => a.r - b.r);
-
-        // 检查连续的心心方块
-        let consecutiveCount = 1;
-        for (let i = 1; i < colHearts.length; i++) {
-          if (colHearts[i].r === colHearts[i - 1].r + 1) {
-            consecutiveCount++;
-            if (consecutiveCount >= HEARTS_NEEDED_FOR_WIN) {
-              return true;
-            }
-          } else {
-            consecutiveCount = 1; // 重新开始计数
-          }
-        }
-      }
-    }
-
-    return false;
-  }
+  private checkHeartsConnected(): boolean { return checkHeartsConnected(this.grid); }
 
   // ------------------------------------------------------------------
-  // Damage player
+  // Damage player - delegates to CombatSystem
   // ------------------------------------------------------------------
   private damagePlayer(world: IWorld): void {
-    if (!this.player || this.player.isInvincible) return;
-
-    this.player.hp -= 1;
+    if (!this.player) return;
+    setRunHp(this.player.hp - 1); // pre-update for sync
+    _damagePlayer(world, this.player, () => this.gameOver(world, 'hp'));
     setRunHp(this.player.hp);
-    this.player.damageCooldown = PLAYER_DAMAGE_COOLDOWN;
-    this.player.isInvincible = true;
-    this.player.inputLockTimer = 0.3; // 300ms 锁定输入
-
-    const sprite = world.getComponent<SpriteComponent>(this.player.entity, SPRITE_COMPONENT);
-    if (sprite) {
-      sprite.alpha = 1.0;
-      let flashes = 0;
-      const flash = () => {
-        if (!this.player) return;
-        flashes++;
-        const bright = flashes % 2 === 1;
-        sprite.alpha = bright ? 1.0 : 0.15;
-        if (flashes < 6) {
-          globalTweens.to(sprite, { alpha: bright ? 0.15 : 1.0 }, {
-            duration: 0.07,
-            easing: Easing.easeOutQuad,
-            onComplete: flash,
-          });
-        } else {
-          sprite.alpha = 0.45;
-          globalTweens.to(sprite, { alpha: 1.0 }, {
-            duration: PLAYER_DAMAGE_COOLDOWN - 0.5,
-            easing: Easing.easeOutQuad,
-          });
-        }
-      };
-      flash();
-    }
-
-    if (this.player.hp <= 0) {
-      this.gameOver(world, 'hp');
-    }
   }
 
   private getResolvedScore(): number {
@@ -2711,14 +2061,7 @@ export class GameScene extends Scene {
     this.grid = [];
 
     // 重置 HUD 实体引用
-    this.enemyCountEntity = 0;
-    this.heartStatusEntity = 0;
-    this.scoreEntity = 0;
-    this.collectEntity = 0;
-    this.hpEntity = 0;
-    this.scoreDisplayEntity = 0;
-    this.timeDisplayEntity = 0;
-    this.levelDisplayEntity = 0;
+    this.hudEntities = { hpEntity: 0 as EntityId, scoreDisplayEntity: 0 as EntityId, timeDisplayEntity: 0 as EntityId, levelDisplayEntity: 0 as EntityId, heartStatusEntity: 0 as EntityId, enemyCountEntity: 0 as EntityId, scoreEntity: 0 as EntityId, collectEntity: 0 as EntityId, readyEntity: 0 as EntityId };
     this.readyEntity = 0;
   }
 
