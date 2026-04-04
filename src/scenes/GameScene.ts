@@ -1019,6 +1019,17 @@ export class GameScene extends Scene {
       }
     }
 
+    // ---- 检查目标位置是否是 NPC（吃了 powerup 才能推） ----
+    if (this.npc && this.npc.col === tc && this.npc.row === tr) {
+      if (p.canBreakWalls && !this.npc.isInvincible) {
+        this.tryPushNpc(world, p, tc, tr, dc, dr);
+      } else {
+        // 没有 powerup 或 NPC 在硬直中，不能推
+        p.cooldown = PLAYER_MOVE_COOLDOWN;
+      }
+      return;
+    }
+
     // ---- EMPTY or SAFE: just move ----
     if (targetCell === CELL_EMPTY || targetCell === CELL_SAFE) {
       this.movePlayerTo(world, p, tc, tr);
@@ -1887,6 +1898,75 @@ export class GameScene extends Scene {
 
     // 随机冷却，clumsy 感
     npc.cooldown = NPC_MOVE_COOLDOWN_MIN + Math.random() * (NPC_MOVE_COOLDOWN_MAX - NPC_MOVE_COOLDOWN_MIN);
+  }
+
+  /** 玩家推动 NPC（需要 powerup），NPC 滑行并压死路径上的怪物 */
+  private tryPushNpc(world: IWorld, p: PlayerState, npcC: number, npcR: number, dc: number, dr: number): void {
+    const npc = this.npc!;
+
+    // 计算 NPC 能滑到的最远空格（逻辑同方块推动，但 NPC 不会碎裂）
+    let finalC = npcC;
+    let finalR = npcR;
+    let distance = 0;
+    for (let i = 1; i <= PLAYER_MAX_PUSH_DISTANCE; i++) {
+      const cc = npcC + dc * i;
+      const cr = npcR + dr * i;
+      if (!inBounds(cc, cr)) break;
+      const cell = this.grid[cr][cc];
+      if (cell === CELL_EMPTY || cell === CELL_SAFE) {
+        finalC = cc; finalR = cr; distance = i;
+      } else if (this.findEnemyAt(cc, cr)) {
+        // 路径上有怪物：NPC 停在怪物前一格，压死怪物
+        finalC = cc; finalR = cr; distance = i;
+        break;
+      } else {
+        break;
+      }
+    }
+
+    if (distance === 0) {
+      p.cooldown = PLAYER_MOVE_COOLDOWN;
+      return;
+    }
+
+    // 压死路径上所有怪物
+    for (let i = 1; i <= distance; i++) {
+      const cc = npcC + dc * i;
+      const cr = npcR + dr * i;
+      const enemyInPath = this.findEnemyAt(cc, cr);
+      if (enemyInPath) {
+        this.crushEnemy(world, p, enemyInPath);
+        // NPC 停在怪物格
+        finalC = cc; finalR = cr;
+        break;
+      }
+    }
+
+    // 更新 NPC 逻辑位置
+    this.grid[npc.row][npc.col] = CELL_EMPTY;
+    npc.col = finalC;
+    npc.row = finalR;
+    this.grid[finalR][finalC] = CELL_PLAYER;
+
+    // NPC 滑行动画（比普通移动快，有被推飞的感觉）
+    const npcTransform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
+    if (npcTransform) {
+      const target = gridToWorld(finalC, finalR);
+      const dur = 0.12 + distance * 0.04;
+      // 起始轻微压扁（被推的冲击感）
+      globalTweens.to(npcTransform, { scaleX: 1.3, scaleY: 0.75 }, {
+        duration: 0.05, easing: Easing.easeOutQuad,
+        onComplete: () => {
+          globalTweens.to(npcTransform, { x: target.x, y: target.y, scaleX: 1.0, scaleY: 1.0 }, {
+            duration: dur, easing: Easing.easeOutCubic,
+          });
+        },
+      });
+    }
+
+    gameAudio.playPush();
+    // 玩家走进 NPC 原来的格子
+    this.movePlayerTo(world, p, npcC, npcR);
   }
 
   private moveNpcTo(world: IWorld, npc: NpcState, nc: number, nr: number): void {
