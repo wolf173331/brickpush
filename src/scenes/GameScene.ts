@@ -965,11 +965,15 @@ export class GameScene extends Scene {
     // ---- 首先检查目标位置是否有敌人 ----
     const enemy = this.findEnemyAt(tc, tr);
     if (enemy) {
-      // 玩家试图移动到敌人所在位置，受到伤害
-      this.damagePlayer(world);
-      // 不能移动到敌人位置
-      p.cooldown = PLAYER_MOVE_COOLDOWN;
-      return;
+      if (!enemy.active) {
+        // inactive 敌人（灰球状态）：玩家可以穿过，不扣血
+        // 继续往下走正常移动逻辑
+      } else {
+        // active 敌人：受到伤害，不能移动
+        this.damagePlayer(world);
+        p.cooldown = PLAYER_MOVE_COOLDOWN;
+        return;
+      }
     }
 
     // ---- EMPTY or SAFE: just move ----
@@ -1586,10 +1590,11 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   private findEnemyAt(c: number, r: number): EnemyState | null {
     for (const e of this.enemies) {
-      if (e.col === c && e.row === r) return e;
+      if (e.col === c && e.row === r && e.active) return e;
     }
     return null;
   }
+
 
   /** 统一处理杀怪得分，含 combo 计算 */
   private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number): void {

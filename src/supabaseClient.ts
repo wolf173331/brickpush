@@ -20,30 +20,6 @@ export const supabase = isConfigured()
     })
   : null
 
-export function isSupabaseAvailable(): boolean {
-  return supabase !== null
-}
-
-// 测试连接：直接查 leaderboard 表
-async function testConnection(): Promise<boolean> {
-  if (!supabase) {
-    console.warn('⚠️ Supabase 未配置，使用本地模式')
-    return false
-  }
-  try {
-    const { error } = await supabase.from('leaderboard').select('id').limit(1)
-    if (error) {
-      console.warn('⚠️ Supabase 连接失败:', error.message)
-      return false
-    }
-    console.log('✅ Supabase 连接成功，在线排行榜已启用')
-    return true
-  } catch (err) {
-    console.error('❌ Supabase 连接异常:', err)
-    return false
-  }
-}
-
 export interface LeaderboardEntry {
   name: string
   score: number
@@ -54,7 +30,9 @@ export interface LeaderboardEntry {
 const LS_KEY = 'brickpush:leaderboard'
 const MAX_ENTRIES = 20
 
-function localLoad(): LeaderboardEntry[] {
+// ---- 本地存储 ----
+
+export function localLoad(): LeaderboardEntry[] {
   try {
     const raw = localStorage.getItem(LS_KEY)
     if (!raw) return []
@@ -65,28 +43,71 @@ function localLoad(): LeaderboardEntry[] {
   }
 }
 
-function localSave(name: string, score: number, levelName: string): LeaderboardEntry[] {
-  const entries = [
+export function localSave(name: string, score: number, levelName: string): LeaderboardEntry[] {
+  const merged = mergeEntries([
     ...localLoad(),
     { name, score, levelName, timestamp: Date.now() },
-  ]
+  ])
+  localStorage.setItem(LS_KEY, JSON.stringify(merged))
+  return merged
+}
+
+/** 合并两个列表：去重（同名取最高分），按分数排序，保留前 MAX_ENTRIES */
+export function mergeEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
+  const map = new Map<string, LeaderboardEntry>()
+  for (const e of entries) {
+    const key = e.name.toUpperCase()
+    const existing = map.get(key)
+    if (!existing || e.score > existing.score) {
+      map.set(key, e)
+    }
+  }
+  return Array.from(map.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_ENTRIES)
-  localStorage.setItem(LS_KEY, JSON.stringify(entries))
-  return entries
 }
+
+// ---- Supabase ----
+
+async function fetchOnline(limit = MAX_ENTRIES): Promise<LeaderboardEntry[]> {
+  if (!supabase) return []
+  try {
+    const { data, error } = await supabase
+      .from('leaderboard')
+      .select('player_name, score, level_name, created_at')
+      .order('score', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    return (data ?? []).map(row => ({
+      name: row.player_name,
+      score: row.score,
+      levelName: row.level_name,
+      timestamp: new Date(row.created_at).getTime(),
+    }))
+  } catch (err) {
+    console.warn('在线获取失败:', err)
+    return []
+  }
+}
+
+async function pushToOnline(name: string, score: number, levelName: string): Promise<void> {
+  if (!supabase) return
+  try {
+    const { error } = await supabase.from('leaderboard').insert([{
+      player_name: name,
+      score: Math.max(0, Math.floor(score)),
+      level_name: levelName,
+    }])
+    if (error) throw error
+  } catch (err) {
+    console.warn('在线上传失败:', err)
+  }
+}
+
+// ---- LeaderboardService ----
 
 export class LeaderboardService {
   private static instance: LeaderboardService
-  private onlineMode = false
-  // 用 Promise 确保 init 完成后再操作，避免 race condition
-  private readonly ready: Promise<void>
-
-  private constructor() {
-    this.ready = testConnection().then((ok) => {
-      this.onlineMode = ok
-    })
-  }
 
   static getInstance(): LeaderboardService {
     if (!LeaderboardService.instance) {
@@ -95,61 +116,50 @@ export class LeaderboardService {
     return LeaderboardService.instance
   }
 
-  async saveScore(name: string, score: number, levelName: string): Promise<LeaderboardEntry[]> {
-    await this.ready // 等待连接检测完成
-    const safeName = name.replace(/[^A-Za-z]/g, '').slice(0, 10).toUpperCase()
+  /**
+   * 获取排行榜：在线+本地合并
+   * 先立即返回本地数据，同时异步拉取在线数据合并后更新缓存
+   */
+  async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    const local = localLoad()
 
-    if (!this.onlineMode || !supabase) {
-      return localSave(safeName, score, levelName)
-    }
+    if (!supabase) return local
 
-    try {
-      const { error } = await supabase.from('leaderboard').insert([
-        {
-          player_name: safeName,
-          score: Math.max(0, Math.floor(score)),
-          level_name: levelName,
-        },
-      ])
-      if (error) throw error
+    // 拉取在线数据，与本地合并
+    const online = await fetchOnline()
+    if (online.length === 0) return local
 
-      // 同步本地缓存
-      localSave(safeName, score, levelName)
-      // 返回最新在线榜单
-      return this.getLeaderboard()
-    } catch (err) {
-      console.warn('在线保存失败，回退本地:', err)
-      return localSave(safeName, score, levelName)
-    }
+    const merged = mergeEntries([...local, ...online])
+    // 更新本地缓存
+    localStorage.setItem(LS_KEY, JSON.stringify(merged))
+    return merged
   }
 
-  async getLeaderboard(limit = MAX_ENTRIES): Promise<LeaderboardEntry[]> {
-    await this.ready
-    if (!this.onlineMode || !supabase) {
-      return localLoad()
+  /**
+   * 保存分数：
+   * 1. 立即写入本地
+   * 2. 异步上传在线（不阻塞）
+   * 3. 返回合并后的榜单
+   */
+  async saveScore(name: string, score: number, levelName: string): Promise<LeaderboardEntry[]> {
+    const safeName = name.replace(/[^A-Za-z]/g, '').slice(0, 10).toUpperCase()
+
+    // 立即写本地
+    const local = localSave(safeName, score, levelName)
+
+    // 异步上传在线，不等待
+    if (supabase) {
+      pushToOnline(safeName, score, levelName).then(() => {
+        // 上传成功后静默更新本地缓存
+        fetchOnline().then(online => {
+          if (online.length > 0) {
+            const merged = mergeEntries([...localLoad(), ...online])
+            localStorage.setItem(LS_KEY, JSON.stringify(merged))
+          }
+        })
+      })
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('leaderboard')
-        .select('player_name, score, level_name, created_at')
-        .order('score', { ascending: false })
-        .limit(limit)
-      if (error) throw error
-
-      const entries: LeaderboardEntry[] = (data ?? []).map((row) => ({
-        name: row.player_name,
-        score: row.score,
-        levelName: row.level_name,
-        timestamp: new Date(row.created_at).getTime(),
-      }))
-
-      // 更新本地缓存
-      localStorage.setItem(LS_KEY, JSON.stringify(entries))
-      return entries
-    } catch (err) {
-      console.warn('在线获取失败，回退本地:', err)
-      return localLoad()
-    }
+    return local
   }
 }
