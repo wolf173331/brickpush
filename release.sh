@@ -66,6 +66,7 @@ echo ""
 echo "📤 提交到 GitHub..."
 git add -A
 git commit -m "release: v${VERSION} - ${MSG}"
+git pull --rebase origin main
 git push origin main
 
 echo ""
