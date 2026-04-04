@@ -2,6 +2,8 @@
 export const GAME_WIDTH = 960;
 export const GAME_HEIGHT = 720;
 export const GAME_BG_COLOR = 0x1a1a2e;
+declare const __APP_VERSION__: string;
+export const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.8.0';
 
 // ---- Grid ----
 export const GRID_COLS = 15;
@@ -35,8 +37,8 @@ export const PLAYER_PUSH_DISTANCE = 1; // 默认推动距离（格数）
 export const PLAYER_MAX_PUSH_DISTANCE = 10; // 最大推动距离
 
 // ---- Enemy ----
-export const ENEMY_MOVE_INTERVAL_MIN = 0.35;
-export const ENEMY_MOVE_INTERVAL_MAX = 0.65;
+export const ENEMY_MOVE_INTERVAL_MIN = 0.5;
+export const ENEMY_MOVE_INTERVAL_MAX = 0.9;
 
 export const ENEMY_TYPE_FROG = 0;
 export const ENEMY_TYPE_BLOB = 1;
@@ -110,9 +112,19 @@ export const HUD_BOTTOM_Y = 688;
 export const HUD_BOTTOM_HEIGHT = 28;
 export const HUD_PADDING_X = 20;
 
+// ---- NPC Squirrel ----
+export const NPC_HP = 255;
+export const NPC_MOVE_COOLDOWN_MIN = 0.6;
+export const NPC_MOVE_COOLDOWN_MAX = 1.4;
+export const NPC_STUN_DURATION = 1.0;
+
+let npcSquirrelEnabled = false;
+export function isNpcSquirrelEnabled(): boolean { return npcSquirrelEnabled; }
+export function setNpcSquirrelEnabled(v: boolean): void { npcSquirrelEnabled = v; }
+export const ENEMY_SPAWN_ACTIVATE_DELAY = 1.0;
+
 // ---- Phase ----
 export const READY_DURATION = 2.0;
-export const ENEMY_SPAWN_ACTIVATE_DELAY = 1.0; // 怪物刷出后延迟激活（秒）
 
 // ---- Z-index layers ----
 export const Z_FLOOR = -10;

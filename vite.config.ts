@@ -1,8 +1,13 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'fs';
+
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 export default defineConfig({
-  // GitHub Pages 用 /brickpush/，COS/其他根目录部署用 /
   base: process.env.VITE_BASE_PATH ?? '/brickpush/',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   server: {
     port: 3000,
     open: true,

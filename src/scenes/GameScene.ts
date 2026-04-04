@@ -88,6 +88,11 @@ import {
   ALL_DIRECTIONS,
   HUD_TOP_Y,
   HUD_PADDING_X,
+  isNpcSquirrelEnabled,
+  NPC_HP,
+  NPC_MOVE_COOLDOWN_MIN,
+  NPC_MOVE_COOLDOWN_MAX,
+  NPC_STUN_DURATION,
 } from '../constants';
 import { getRunHp, getRunScore, setRunHp, setRunScore } from '../gameProgress';
 import { gameAudio } from '../audio';
@@ -121,7 +126,20 @@ interface EnemyState {
   active: boolean;
   moveCooldown: number;
   stunTimer: number;
-  activateTimer: number; // > 0 时等待激活
+  activateTimer: number;
+  dying: boolean; // 死亡动画播放中，不参与碰撞
+}
+
+interface NpcState {
+  col: number;
+  row: number;
+  entity: EntityId;
+  hp: number;
+  cooldown: number;
+  stunTimer: number;
+  moving: boolean;
+  damageCooldown: number;
+  isInvincible: boolean;
 }
 
 interface BombState {
@@ -176,6 +194,7 @@ export class GameScene extends Scene {
 
   // ---- Entities ----
   private player: PlayerState | null = null;
+  private npc: NpcState | null = null;
   private enemies: EnemyState[] = [];
   private bombs: BombState[] = [];
 
@@ -260,6 +279,7 @@ export class GameScene extends Scene {
       this.nonGridEntities.clear();
     }
     this.player = null;
+    this.npc = null;
     this.enemies = [];
     this.bombs = [];
     this.phase = 'ready';
@@ -450,6 +470,27 @@ export class GameScene extends Scene {
             pushDistance: PLAYER_PUSH_DISTANCE, canBreakWalls: false,
             inputLockTimer: 0,
           };
+
+          // 松鼠 NPC：生成在玩家右边一格
+          if (isNpcSquirrelEnabled()) {
+            const nc = c + 1;
+            const nr = r;
+            if (inBounds(nc, nr) && this.grid[nr][nc] === CELL_EMPTY) {
+              const npcPos = gridToWorld(nc, nr);
+              const neid = EntityBuilder.create(world, W, H)
+                .withTransform({ x: npcPos.x, y: npcPos.y })
+                .withSprite({ textureId: ASSETS.PLAYER2, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_PLAYER })
+                .build();
+              this.trackEntity(neid);
+              this.grid[nr][nc] = CELL_PLAYER; // 占位
+              this.npc = {
+                col: nc, row: nr, entity: neid,
+                hp: NPC_HP, cooldown: NPC_MOVE_COOLDOWN_MIN,
+                stunTimer: 0, moving: false,
+                damageCooldown: 0, isInvincible: false,
+              };
+            }
+          }
         }
 
         // CELL_ENEMY_SPAWN(6) 已从地图移除，忽略
@@ -506,6 +547,7 @@ export class GameScene extends Scene {
         type, active: activate, moveCooldown: getEnemyMoveCooldown(type),
         stunTimer: 0,
         activateTimer: activate ? 0 : ENEMY_SPAWN_ACTIVATE_DELAY,
+        dying: false,
       });
     }
   }
@@ -857,7 +899,6 @@ export class GameScene extends Scene {
         }
       }
 
-      this.handlePlayerInput(world, dt);
       this.updateEnemies(world, dt);
       this.updateWaves(world, dt);
       // combo 窗口计时
@@ -865,6 +906,8 @@ export class GameScene extends Scene {
         this.comboTimer -= dt;
         if (this.comboTimer <= 0) this.comboCount = 0;
       }
+      this.handlePlayerInput(world, dt);
+      this.updateNpc(world, dt);
       this.updateHUD(world);
       this.checkComplete(world);
       return;
@@ -1011,7 +1054,7 @@ export class GameScene extends Scene {
       );
 
       if (distance > 0) {
-        // 可以推动，检查路径上是否有敌人
+        // 先锁定路径上的敌人（立即 dying，不给移动机会）
         for (let i = 1; i <= distance; i++) {
           const checkC = tc + dc * i;
           const checkR = tr + dr * i;
@@ -1021,7 +1064,7 @@ export class GameScene extends Scene {
           }
         }
 
-        // 推动砖块到最终位置
+        // 再推动砖块
         this.pushBlock(world, tc, tr, finalC, finalR, targetCell);
         this.movePlayerTo(world, p, tc, tr);
         return;
@@ -1590,7 +1633,7 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   private findEnemyAt(c: number, r: number): EnemyState | null {
     for (const e of this.enemies) {
-      if (e.col === c && e.row === r && e.active) return e;
+      if (e.col === c && e.row === r && e.active && !e.dying) return e;
     }
     return null;
   }
@@ -1612,8 +1655,57 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   private crushEnemy(world: IWorld, p: PlayerState, enemy: EnemyState): void {
     this.killEnemyScore(world, p, enemy.col, enemy.row);
-    this.destroyEnemy(world, enemy);
-    this.maybeDropItem(world, enemy.col, enemy.row, enemy.type);
+
+    // 立即标记为 dying，停止碰撞检测和 AI
+    enemy.dying = true;
+    // 从 enemies 数组移除（不再参与任何逻辑），但实体还在
+    const idx = this.enemies.indexOf(enemy);
+    if (idx >= 0) this.enemies.splice(idx, 1);
+    // 清除网格占位
+    if (this.grid[enemy.row][enemy.col] !== CELL_HEART_BLOCK &&
+        this.grid[enemy.row][enemy.col] !== CELL_BLOCK &&
+        this.grid[enemy.row][enemy.col] !== CELL_STAR_BLOCK &&
+        this.grid[enemy.row][enemy.col] !== CELL_BOMB) {
+      this.grid[enemy.row][enemy.col] = CELL_EMPTY;
+    }
+
+    // 压扁动画：卡通夸张效果
+    const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+    const sprite = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
+
+    if (transform) {
+      // 阶段1：瞬间压扁（宽变大，高变小）
+      globalTweens.to(transform, { scaleX: 2.2, scaleY: 0.15 }, {
+        duration: 0.08,
+        easing: Easing.easeOutQuad,
+        onComplete: () => {
+          // 阶段2：轻微弹回（还是扁的，但稍微回弹）
+          globalTweens.to(transform, { scaleX: 1.8, scaleY: 0.25 }, {
+            duration: 0.1,
+            easing: Easing.easeOutQuad,
+            onComplete: () => {
+              // 阶段3：淡出消失
+              if (sprite) {
+                globalTweens.to(sprite, { alpha: 0 }, {
+                  duration: 0.35,
+                  easing: Easing.easeInQuad,
+                  onComplete: () => {
+                    world.destroyEntity(enemy.entity);
+                    this.maybeDropItem(world, enemy.col, enemy.row, enemy.type);
+                  },
+                });
+              } else {
+                world.destroyEntity(enemy.entity);
+                this.maybeDropItem(world, enemy.col, enemy.row, enemy.type);
+              }
+            },
+          });
+        },
+      });
+    } else {
+      world.destroyEntity(enemy.entity);
+      this.maybeDropItem(world, enemy.col, enemy.row, enemy.type);
+    }
   }
 
   private destroyEnemy(world: IWorld, enemy: EnemyState): void {
@@ -1704,6 +1796,152 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // Enemy AI
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // NPC Squirrel AI
+  // ------------------------------------------------------------------
+  private updateNpc(world: IWorld, dt: number): void {
+    const npc = this.npc;
+    if (!npc) return;
+
+    // 受伤冷却
+    if (npc.damageCooldown > 0) {
+      npc.damageCooldown -= dt;
+      if (npc.damageCooldown <= 0) npc.isInvincible = false;
+    }
+    // stun
+    if (npc.stunTimer > 0) { npc.stunTimer -= dt; return; }
+    if (npc.moving) return;
+    if (npc.cooldown > 0) { npc.cooldown -= dt; return; }
+
+    // 找最近的心心方块，尝试推向另一个心心
+    const hearts: Array<{ c: number; r: number }> = [];
+    for (let r = 0; r < GRID_ROWS; r++)
+      for (let c = 0; c < GRID_COLS; c++)
+        if (this.grid[r][c] === CELL_HEART_BLOCK) hearts.push({ c, r });
+
+    if (hearts.length === 0) return;
+
+    // 找离 NPC 最近的心心
+    hearts.sort((a, b) =>
+      (Math.abs(a.c - npc.col) + Math.abs(a.r - npc.row)) -
+      (Math.abs(b.c - npc.col) + Math.abs(b.r - npc.row))
+    );
+    const target = hearts[0];
+
+    // 计算朝目标心心移动的方向（clumsy：有30%概率随机走）
+    let dirs = [...ALL_DIRECTIONS];
+    if (Math.random() > 0.3) {
+      // 大部分时候朝目标方向走
+      const dc = target.c - npc.col;
+      const dr = target.r - npc.row;
+      dirs.sort((a, b) => {
+        const da = Math.abs((npc.col + a.dc) - target.c) + Math.abs((npc.row + a.dr) - target.r);
+        const db = Math.abs((npc.col + b.dc) - target.c) + Math.abs((npc.row + b.dr) - target.r);
+        return da - db;
+      });
+      // clumsy：偶尔在最优方向上加点随机偏移
+      if (Math.random() < 0.25 && dirs.length > 1) {
+        [dirs[0], dirs[1]] = [dirs[1], dirs[0]];
+      }
+      void dc; void dr;
+    } else {
+      dirs = dirs.sort(() => Math.random() - 0.5);
+    }
+
+    for (const dir of dirs) {
+      const nc = npc.col + dir.dc;
+      const nr = npc.row + dir.dr;
+      if (!inBounds(nc, nr)) continue;
+
+      const cell = this.grid[nr][nc];
+
+      // 空格直接走
+      if (cell === CELL_EMPTY || cell === CELL_SAFE) {
+        this.moveNpcTo(world, npc, nc, nr);
+        break;
+      }
+
+      // 心心方块：尝试推
+      if (cell === CELL_HEART_BLOCK) {
+        const bc = nc + dir.dc;
+        const br = nr + dir.dr;
+        if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
+          // 推心心
+          this.pushBlock(world, nc, nr, bc, br, CELL_HEART_BLOCK);
+          this.moveNpcTo(world, npc, nc, nr);
+          break;
+        }
+      }
+
+      // 普通方块：也尝试推（clumsy 会推错方向）
+      if (cell === CELL_BLOCK) {
+        const bc = nc + dir.dc;
+        const br = nr + dir.dr;
+        if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
+          this.pushBlock(world, nc, nr, bc, br, CELL_BLOCK);
+          this.moveNpcTo(world, npc, nc, nr);
+          break;
+        }
+      }
+    }
+
+    // 随机冷却，clumsy 感
+    npc.cooldown = NPC_MOVE_COOLDOWN_MIN + Math.random() * (NPC_MOVE_COOLDOWN_MAX - NPC_MOVE_COOLDOWN_MIN);
+  }
+
+  private moveNpcTo(world: IWorld, npc: NpcState, nc: number, nr: number): void {
+    this.grid[npc.row][npc.col] = CELL_EMPTY;
+    npc.col = nc;
+    npc.row = nr;
+    this.grid[nr][nc] = CELL_PLAYER;
+
+    const target = gridToWorld(nc, nr);
+    const transform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
+    if (transform) {
+      const duration = 0.18 + Math.random() * 0.1; // 稍微不稳定的动画时长
+      globalTweens.to(transform, { x: target.x, y: target.y }, {
+        duration,
+        easing: Easing.easeOutQuad,
+        onComplete: () => {
+          // 落地后检测敌人碰撞
+          for (const enemy of this.enemies) {
+            if (enemy.active && !enemy.dying && enemy.col === nc && enemy.row === nr) {
+              this.damageNpc(world, npc);
+              break;
+            }
+          }
+        },
+      });
+    }
+  }
+
+  private damageNpc(world: IWorld, npc: NpcState): void {
+    if (npc.isInvincible) return;
+    npc.hp = Math.max(0, npc.hp - 1);
+    npc.damageCooldown = PLAYER_DAMAGE_COOLDOWN;
+    npc.isInvincible = true;
+    npc.stunTimer = NPC_STUN_DURATION;
+
+    // 闪烁效果
+    const sprite = world.getComponent<SpriteComponent>(npc.entity, SPRITE_COMPONENT);
+    if (sprite) {
+      let flashes = 0;
+      const flash = () => {
+        flashes++;
+        sprite.alpha = flashes % 2 === 1 ? 0.2 : 1.0;
+        if (flashes < 6) {
+          globalTweens.to(sprite, { alpha: flashes % 2 === 1 ? 1.0 : 0.2 }, {
+            duration: 0.07, easing: Easing.easeOutQuad, onComplete: flash,
+          });
+        } else {
+          sprite.alpha = 0.5;
+          globalTweens.to(sprite, { alpha: 1.0 }, { duration: PLAYER_DAMAGE_COOLDOWN - 0.5, easing: Easing.easeOutQuad });
+        }
+      };
+      flash();
+    }
+  }
+
   private updateWaves(world: IWorld, dt: number): void {
     if (this.currentWave >= this.totalWaves) return;
     if (this.nextWaveTimer <= 0) return;
@@ -1715,9 +1953,10 @@ export class GameScene extends Scene {
 
   private updateEnemies(world: IWorld, dt: number): void {
     for (const enemy of this.enemies) {
+      if (enemy.dying) continue; // 死亡动画中，跳过所有逻辑
+
       // 延迟激活
-      if (!enemy.active) {
-        if (enemy.activateTimer > 0) {
+      if (!enemy.active) {        if (enemy.activateTimer > 0) {
           enemy.activateTimer -= dt;
           if (enemy.activateTimer <= 0) {
             enemy.active = true;
@@ -1779,6 +2018,11 @@ export class GameScene extends Scene {
                 });
               },
             });
+          }
+          // NPC 碰撞
+          if (this.npc && !this.npc.isInvincible && this.npc.col === nc && this.npc.row === nr) {
+            this.damageNpc(world, this.npc);
+            enemy.stunTimer = 1.2;
           }
         },
       });
