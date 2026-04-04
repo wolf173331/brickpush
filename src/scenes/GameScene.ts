@@ -1731,12 +1731,6 @@ export class GameScene extends Scene {
       // stun 计时
       if (enemy.stunTimer > 0) enemy.stunTimer -= dt;
 
-      // 每帧检测是否踩到玩家
-      if (this.player && this.player.col === enemy.col && this.player.row === enemy.row) {
-        this.damagePlayer(world);
-        enemy.stunTimer = 1.2; // 撞到后随机游荡 1.2 秒
-      }
-
       enemy.moveCooldown -= dt;
       if (enemy.moveCooldown > 0) continue;
       enemy.moveCooldown = getEnemyMoveCooldown(enemy.type);
@@ -1757,7 +1751,7 @@ export class GameScene extends Scene {
     }
   }
 
-  /** 移动敌人到目标格，用 tween 平滑位移 */
+  /** 移动敌人到目标格，动画完成后再检测碰撞 */
   private moveEnemyTo(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
     this.grid[enemy.row][enemy.col] = CELL_EMPTY;
     enemy.col = nc;
@@ -1765,17 +1759,77 @@ export class GameScene extends Scene {
 
     const target = gridToWorld(nc, nr);
     const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+    const duration = enemy.moveCooldown * 0.82;
+
     if (transform) {
       globalTweens.to(transform, { x: target.x, y: target.y }, {
-        duration: enemy.moveCooldown * 0.85, // 在下次移动前完成动画
+        duration,
         easing: Easing.easeOutQuad,
+        onComplete: () => {
+          // 动画完成后才判断碰撞，此时玩家若已离开则不扣血
+          if (this.player && this.player.col === nc && this.player.row === nr) {
+            this.damagePlayer(world);
+            enemy.stunTimer = 1.2;
+            // 碰撞反弹：敌人轻微缩放表示撞击感
+            globalTweens.to(transform, { scaleX: 1.3, scaleY: 1.3 }, {
+              duration: 0.06, easing: Easing.easeOutQuad,
+              onComplete: () => {
+                globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, {
+                  duration: 0.1, easing: Easing.easeInQuad,
+                });
+              },
+            });
+          }
+        },
       });
     }
+  }
 
-    if (this.player && this.player.col === nc && this.player.row === nr) {
-      this.damagePlayer(world);
-      enemy.stunTimer = 1.2;
-    }
+  /** BOW 跳跃动画：起跳缩小 → 空中放大 → 落地恢复，分三段 */
+  private moveEnemyBowJump(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
+    this.grid[enemy.row][enemy.col] = CELL_EMPTY;
+    enemy.col = nc;
+    enemy.row = nr;
+
+    const target = gridToWorld(nc, nr);
+    const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+    const totalDuration = enemy.moveCooldown * 0.82;
+    const phase = totalDuration / 3;
+
+    if (!transform) return;
+
+    // 阶段1：起跳 — 缩小（蓄力感）
+    globalTweens.to(transform, { scaleX: 0.7, scaleY: 0.7 }, {
+      duration: phase * 0.4,
+      easing: Easing.easeInQuad,
+      onComplete: () => {
+        // 阶段2：空中 — 放大并移动到目标
+        globalTweens.to(transform, { x: target.x, y: target.y, scaleX: 1.4, scaleY: 1.4 }, {
+          duration: phase * 1.2,
+          easing: Easing.easeOutQuad,
+          onComplete: () => {
+            // 阶段3：落地 — 恢复正常大小，轻微压扁
+            globalTweens.to(transform, { scaleX: 1.1, scaleY: 0.8 }, {
+              duration: phase * 0.2,
+              easing: Easing.easeOutQuad,
+              onComplete: () => {
+                globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, {
+                  duration: phase * 0.2,
+                  easing: Easing.easeInQuad,
+                  onComplete: () => {
+                    // 落地后检测碰撞
+                    if (this.player && this.player.col === nc && this.player.row === nr) {
+                      this.damagePlayer(world);
+                      enemy.stunTimer = 1.2;
+                    }
+                  },
+                });
+              },
+            });
+          },
+        });
+      },
+    });
   }
 
   /** 纯随机移动（stun 状态 / FROG） */
@@ -1847,7 +1901,7 @@ export class GameScene extends Scene {
         const jc = nc + dir.dc;
         const jr = nr + dir.dr;
         if (inBounds(jc, jr) && this.grid[jr][jc] === CELL_EMPTY && !this.findEnemyAt(jc, jr)) {
-          this.moveEnemyTo(world, enemy, jc, jr);
+          this.moveEnemyBowJump(world, enemy, jc, jr); // 跳跃动画
           return;
         }
       }
