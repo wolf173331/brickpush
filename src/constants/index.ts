@@ -118,7 +118,7 @@ export const NPC_MOVE_COOLDOWN_MIN = 0.6;
 export const NPC_MOVE_COOLDOWN_MAX = 1.4;
 export const NPC_STUN_DURATION = 1.0;
 
-let npcSquirrelEnabled = false;
+let npcSquirrelEnabled = true;
 export function isNpcSquirrelEnabled(): boolean { return npcSquirrelEnabled; }
 export function setNpcSquirrelEnabled(v: boolean): void { npcSquirrelEnabled = v; }
 export const ENEMY_SPAWN_ACTIVATE_DELAY = 1.0;
