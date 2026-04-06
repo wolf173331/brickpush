@@ -103,18 +103,30 @@ const ENEMY_MOVE_SPEED = 280;   // 敌人移动速度
 const NPC_MOVE_SPEED = 240;     // NPC移动速度
 const BLOCK_PUSH_SPEED = 400;   // 方块推动速度
 
+// ---- 转向配置 ----
+const REDIRECT_THRESHOLD = 0.5;  // 移动进度超过此值后不能转向（0.5 = 半个格子）
+
 // ---- State interfaces ----
 
-/** 移动状态接口 */
+/** 移动状态接口 - 增强版支持中途转向 */
 interface MovementState {
   isMoving: boolean;
+  // 像素坐标
   startX: number;
   startY: number;
   targetX: number;
   targetY: number;
+  // 格子坐标
+  sourceCol: number;
+  sourceRow: number;
+  targetCol: number;
+  targetRow: number;
+  // 进度
   progress: number;      // 0 ~ 1
   duration: number;      // 预计持续时间
   elapsed: number;       // 已用时间
+  // 方向（用于判断是否同方向）
+  direction: { dc: number; dr: number } | null;
 }
 
 interface PlayerState {
@@ -202,19 +214,35 @@ function createMovementState(): MovementState {
     isMoving: false,
     startX: 0, startY: 0,
     targetX: 0, targetY: 0,
+    sourceCol: 0, sourceRow: 0,
+    targetCol: 0, targetRow: 0,
     progress: 0,
     duration: 0,
     elapsed: 0,
+    direction: null,
   };
 }
 
 /** 初始化移动 */
-function startMovement(state: MovementState, startX: number, startY: number, targetX: number, targetY: number, speed: number): void {
+function startMovement(
+  state: MovementState, 
+  startX: number, startY: number, 
+  targetX: number, targetY: number, 
+  sourceCol: number, sourceRow: number,
+  targetCol: number, targetRow: number,
+  dc: number, dr: number,
+  speed: number
+): void {
   state.isMoving = true;
   state.startX = startX;
   state.startY = startY;
   state.targetX = targetX;
   state.targetY = targetY;
+  state.sourceCol = sourceCol;
+  state.sourceRow = sourceRow;
+  state.targetCol = targetCol;
+  state.targetRow = targetRow;
+  state.direction = { dc, dr };
   state.progress = 0;
   state.elapsed = 0;
   const distance = Math.sqrt((targetX - startX) ** 2 + (targetY - startY) ** 2);
@@ -228,15 +256,44 @@ function updateMovement(state: MovementState, dt: number): boolean {
   state.elapsed += dt;
   state.progress = Math.min(1, state.elapsed / state.duration);
   
-  // 使用 easeOutQuad 缓动
-  //const t = state.progress;
-  //const eased = 1 - (1 - t) * (1 - t);
-  
   if (state.progress >= 1) {
     state.isMoving = false;
+    state.direction = null;
     return true; // 移动完成
   }
   return false;
+}
+
+/** 检查是否还可以转向（移动未超过阈值） */
+function canRedirect(state: MovementState): boolean {
+  if (!state.isMoving) return false;
+  return state.progress < REDIRECT_THRESHOLD;
+}
+
+/** 从当前移动位置计算新的目标（用于中途转向） */
+function redirectMovement(
+  state: MovementState,
+  newTargetX: number, newTargetY: number,
+  newTargetCol: number, newTargetRow: number,
+  newDc: number, newDr: number,
+  speed: number
+): void {
+  // 获取当前位置
+  const currentPos = getCurrentPosition(state);
+  
+  // 更新为新的移动目标
+  state.startX = currentPos.x;
+  state.startY = currentPos.y;
+  state.targetX = newTargetX;
+  state.targetY = newTargetY;
+  state.targetCol = newTargetCol;
+  state.targetRow = newTargetRow;
+  state.direction = { dc: newDc, dr: newDr };
+  state.progress = 0;
+  state.elapsed = 0;
+  
+  const distance = Math.sqrt((newTargetX - currentPos.x) ** 2 + (newTargetY - currentPos.y) ** 2);
+  state.duration = distance / speed;
 }
 
 /** 获取当前插值位置 */
@@ -811,10 +868,10 @@ export class GameScene extends Scene {
 
     const BTN = 80;
     const dirs = [
-      { label: '▲', x: BTN + 10, y: -(BTN * 2 + 20), dc: 0, dr: -1 },
-      { label: '▼', x: BTN + 10, y: -20, dc: 0, dr: 1 },
-      { label: '◀', x: 10, y: -(BTN + 20), dc: -1, dr: 0 },
-      { label: '▶', x: BTN * 2 + 10, y: -(BTN + 20), dc: 1, dr: 0 },
+      { label: '▲', x: BTN + 370, y: -(BTN * 2 + 20), dc: 0, dr: -1 },
+      { label: '▼', x: BTN + 370, y: -20, dc: 0, dr: 1 },
+      { label: '◀', x: 370, y: -(BTN + 20), dc: -1, dr: 0 },
+      { label: '▶', x: BTN * 2 + 370, y: -(BTN + 20), dc: 1, dr: 0 },
     ];
 
     for (const d of dirs) {
@@ -913,20 +970,20 @@ export class GameScene extends Scene {
       transform.x = pos.x;
       transform.y = pos.y;
       
-      // 每帧检测与敌人的碰撞（移动过程中）
+      // 每帧检测与敌人的碰撞（基于实际坐标，而非格子）
       this.checkPlayerEnemyCollisionDuringMovement(world, p, pos.x, pos.y);
     }
 
     if (completed) {
-      p.moving = false;
-      // 移动完成，确保最终位置精确
+      // 移动完成，更新逻辑格子坐标到目标位置
+      this.completePlayerMove(p);
+      
+      // 确保最终位置精确
       const finalPos = gridToWorld(p.col, p.row);
       if (transform) {
         transform.x = finalPos.x;
         transform.y = finalPos.y;
       }
-      // 最终碰撞检测
-      this.checkPlayerEnemyCollisionAtGrid(world, p.col, p.row);
     }
   }
 
@@ -1012,13 +1069,15 @@ export class GameScene extends Scene {
     }
   }
 
-  private checkPlayerEnemyCollisionAtGrid(world: IWorld, col: number, row: number): void {
+  /* 保留：格子坐标碰撞检测（备用）
+  private checkPlayerCollisionAtGrid(world: IWorld, col: number, row: number): void {
     const enemy = this.findEnemyAt(col, row);
     if (enemy && enemy.active && !enemy.dying) {
       this.damagePlayer(world);
       enemy.stunTimer = 1.2;
     }
   }
+  */
 
   private checkEnemyCollisionDuringMovement(world: IWorld, enemy: EnemyState, x: number, y: number): void {
     const enemyRadius = TILE_SIZE * 0.3;
@@ -1094,15 +1153,19 @@ export class GameScene extends Scene {
     const p = this.player;
     if (!p) return;
 
+    // 更新无敌时间
     if (p.damageCooldown > 0) {
       p.damageCooldown -= dt;
       if (p.damageCooldown <= 0) p.isInvincible = false;
     }
 
+    // 受伤锁定输入
     if (p.inputLockTimer > 0) { p.inputLockTimer -= dt; return; }
+    
+    // 冷却中
     if (p.cooldown > 0) { p.cooldown -= dt; return; }
-    if (p.moving || p.movement.isMoving) return;
 
+    // 获取输入
     const input = world.getSystem<InputSystem>('InputSystem');
     if (!input) return;
 
@@ -1117,7 +1180,67 @@ export class GameScene extends Scene {
       this.touchDir = null;
     }
 
+    // 无输入则返回
+    if (dc === 0 && dr === 0) return;
+
+    // 正在移动中
+    if (p.movement.isMoving) {
+      // 检查是否可以转向（未超过阈值）
+      if (canRedirect(p.movement)) {
+        const currentDir = p.movement.direction;
+        
+        // 同方向：忽略
+        if (currentDir && currentDir.dc === dc && currentDir.dr === dr) {
+          return;
+        }
+        
+        // 新方向：计算从当前位置到新目标格子的转向
+        this.tryRedirectPlayer(world, p, dc, dr);
+      }
+      // 超过阈值不能转向，忽略输入
+      return;
+    }
+
+    // 不在移动中，正常移动
     if (dc !== 0 || dr !== 0) this.tryMovePlayer(world, p, dc, dr);
+  }
+
+  /** 尝试中途转向 */
+  private tryRedirectPlayer(_world: IWorld, p: PlayerState, dc: number, dr: number): void {
+    // 从当前实际位置计算新的目标格子
+    const currentCol = p.movement.sourceCol;
+    const currentRow = p.movement.sourceRow;
+    const newTargetCol = currentCol + dc;
+    const newTargetRow = currentRow + dr;
+    
+    if (!inBounds(newTargetCol, newTargetRow)) return;
+    
+    // 检查新目标是否可移动（简化版，只检查空地）
+    const targetCell = this.grid[newTargetRow][newTargetCol];
+    if (targetCell !== CELL_EMPTY && targetCell !== CELL_SAFE && targetCell !== CELL_ITEM) {
+      // 新方向有障碍，不能转向
+      return;
+    }
+    
+    // 恢复原格子状态
+    this.grid[p.movement.targetCol][p.movement.targetRow] = CELL_EMPTY;
+    
+    // 设置新目标
+    const newTarget = gridToWorld(newTargetCol, newTargetRow);
+    
+    // 执行转向
+    redirectMovement(
+      p.movement,
+      newTarget.x, newTarget.y,
+      newTargetCol, newTargetRow,
+      dc, dr,
+      PLAYER_MOVE_SPEED
+    );
+    
+    // 更新网格状态
+    this.grid[newTargetRow][newTargetCol] = CELL_PLAYER;
+    
+    gameAudio.playWalk();
   }
 
   private tryMovePlayer(world: IWorld, p: PlayerState, dc: number, dr: number): void {
@@ -1143,14 +1266,14 @@ export class GameScene extends Scene {
 
     // 空地或安全区
     if (targetCell === CELL_EMPTY || targetCell === CELL_SAFE) {
-      this.movePlayerTo(world, p, tc, tr);
+      this.movePlayerTo(world, p, tc, tr, dc, dr);
       return;
     }
 
     // 道具
     if (targetCell === CELL_ITEM) {
       this.collectItem(world, p, tc, tr);
-      this.movePlayerTo(world, p, tc, tr);
+      this.movePlayerTo(world, p, tc, tr, dc, dr);
       return;
     }
 
@@ -1167,11 +1290,11 @@ export class GameScene extends Scene {
           if (enemyInPath) this.crushEnemy(world, p, enemyInPath);
         }
         this.pushWall(world, tc, tr, finalC, finalR);
-        this.movePlayerTo(world, p, tc, tr);
+        this.movePlayerTo(world, p, tc, tr, dc, dr);
         return;
       } else {
         // 无法推动（被阻挡），墙碎裂
-        this.handleEdgePushWall(world, p, tc, tr);
+        this.handleEdgePushWall(world, p, tc, tr, dc, dr);
         return;
       }
     }
@@ -1192,7 +1315,7 @@ export class GameScene extends Scene {
           if (enemyInPath) this.crushEnemy(world, p, enemyInPath);
         }
         this.pushBlock(world, tc, tr, finalC, finalR, targetCell);
-        this.movePlayerTo(world, p, tc, tr);
+        this.movePlayerTo(world, p, tc, tr, dc, dr);
         return;
       } else {
         this.handleEdgePush(world, p, tc, tr, targetCell, dc, dr);
@@ -1244,7 +1367,7 @@ export class GameScene extends Scene {
   }
 
   private handleEdgePush(world: IWorld, p: PlayerState, blockC: number, blockR: number, cellType: number,
-    _dc: number, _dr: number): void {
+    dc: number, dr: number): void {
     const key = gridKey(blockC, blockR);
     const blockEntity = this.entityMap.get(key);
 
@@ -1254,7 +1377,7 @@ export class GameScene extends Scene {
       this.spawnScorePopup(world, blockC, blockR, SCORE_BLOCK_BREAK, PALETTE.BREAK_WHITE);
       this.destroyBlockAt(world, blockC, blockR);
       this.spawnBreakEffect(world, blockC, blockR, 0x44bbaa);
-      this.movePlayerTo(world, p, blockC, blockR);
+      this.movePlayerTo(world, p, blockC, blockR, dc, dr);
       return;
     }
 
@@ -1273,7 +1396,7 @@ export class GameScene extends Scene {
       gameAudio.playPush();
       this.explodeSingleBomb(world, p, blockC, blockR);
       if (this.grid[blockR][blockC] === CELL_EMPTY) {
-        this.movePlayerTo(world, p, blockC, blockR);
+        this.movePlayerTo(world, p, blockC, blockR, dc, dr);
       } else { p.cooldown = PLAYER_MOVE_COOLDOWN; }
       return;
     }
@@ -1296,13 +1419,13 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // Handle edge push for WALL (墙推到边缘碎裂)
   // ------------------------------------------------------------------
-  private handleEdgePushWall(world: IWorld, p: PlayerState, wallC: number, wallR: number): void {
+  private handleEdgePushWall(world: IWorld, p: PlayerState, wallC: number, wallR: number, dc: number, dr: number): void {
     gameAudio.playPush();
     p.score += SCORE_WALL_BREAK;
     this.spawnScorePopup(world, wallC, wallR, SCORE_WALL_BREAK, PALETTE.BREAK_WHITE);
     this.destroyWallAt(world, wallC, wallR);
     this.spawnBreakEffect(world, wallC, wallR, 0x333333);
-    this.movePlayerTo(world, p, wallC, wallR);
+    this.movePlayerTo(world, p, wallC, wallR, dc, dr);
   }
 
   // ------------------------------------------------------------------
@@ -1339,7 +1462,7 @@ export class GameScene extends Scene {
     }
 
     if (hitEnemy) {
-      this.movePlayerTo(world, p, bombC, bombR);
+      this.movePlayerTo(world, p, bombC, bombR, dc, dr);
       const bombKey = gridKey(bombC, bombR);
       const bombEid = this.entityMap.get(bombKey);
       if (bombEid !== undefined) {
@@ -1357,7 +1480,7 @@ export class GameScene extends Scene {
     }
 
     const duration = this.pushBlock(world, bombC, bombR, finalC, finalR, CELL_BOMB);
-    this.movePlayerTo(world, p, bombC, bombR);
+    this.movePlayerTo(world, p, bombC, bombR, dc, dr);
 
     setTimeout(() => {
       if (!this.isActive || this.phase === 'complete') return;
@@ -1487,13 +1610,16 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // 移动玩家（新的平滑移动方式）
   // ------------------------------------------------------------------
-  private movePlayerTo(world: IWorld, p: PlayerState, tc: number, tr: number): void {
-    // 更新网格逻辑
+  private movePlayerTo(world: IWorld, p: PlayerState, tc: number, tr: number, dc: number, dr: number): void {
+    // 更新网格逻辑 - 源格子变空（或安全区）
     this.grid[p.row][p.col] = this.safeZones.has(gridKey(p.col, p.row)) ? CELL_SAFE : CELL_EMPTY;
     this.grid[tr][tc] = CELL_PLAYER;
 
-    p.col = tc;
-    p.row = tr;
+    // 注意：这里不立即更新 p.col/p.row，而是等移动完成后再更新
+    // 这样碰撞检测基于实际坐标，而不是提前占用目标格子
+    const sourceCol = p.col;
+    const sourceRow = p.row;
+    
     p.cooldown = PLAYER_MOVE_COOLDOWN;
     p.moving = true;
     gameAudio.playWalk();
@@ -1505,11 +1631,29 @@ export class GameScene extends Scene {
       const startY = transform.y;
       const target = gridToWorld(tc, tr);
       
-      // 初始化移动状态
-      startMovement(p.movement, startX, startY, target.x, target.y, PLAYER_MOVE_SPEED);
+      // 初始化移动状态 - 传入完整的格子坐标和方向
+      startMovement(
+        p.movement, 
+        startX, startY, 
+        target.x, target.y,
+        sourceCol, sourceRow,
+        tc, tr,
+        dc, dr,
+        PLAYER_MOVE_SPEED
+      );
     } else {
       p.moving = false;
     }
+  }
+
+  /** 完成移动，更新格子坐标 */
+  private completePlayerMove(p: PlayerState): void {
+    if (p.movement.isMoving) return;
+    
+    // 更新逻辑格子坐标到目标位置
+    p.col = p.movement.targetCol;
+    p.row = p.movement.targetRow;
+    p.moving = false;
   }
 
   // ------------------------------------------------------------------
@@ -1742,14 +1886,14 @@ export class GameScene extends Scene {
       const cell = this.grid[nr][nc];
 
       if (cell === CELL_EMPTY || cell === CELL_SAFE) {
-        this.moveNpcTo(world, npc, nc, nr);
+        this.moveNpcTo(world, npc, nc, nr, dir.dc, dir.dr);
         break;
       }
       if (cell === CELL_HEART_BLOCK) {
         const bc = nc + dir.dc, br = nr + dir.dr;
         if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
           this.pushBlock(world, nc, nr, bc, br, CELL_HEART_BLOCK);
-          this.moveNpcTo(world, npc, nc, nr);
+          this.moveNpcTo(world, npc, nc, nr, dir.dc, dir.dr);
           break;
         }
       }
@@ -1757,7 +1901,7 @@ export class GameScene extends Scene {
         const bc = nc + dir.dc, br = nr + dir.dr;
         if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
           this.pushBlock(world, nc, nr, bc, br, CELL_BLOCK);
-          this.moveNpcTo(world, npc, nc, nr);
+          this.moveNpcTo(world, npc, nc, nr, dir.dc, dir.dr);
           break;
         }
       }
@@ -1821,7 +1965,7 @@ export class GameScene extends Scene {
         }
         if (npcSprite) npcSprite.alpha = 1.0;
         
-        startMovement(npc.movement, npcTransform.x, npcTransform.y, target.x, target.y, NPC_MOVE_SPEED * 2.0);
+        startMovement(npc.movement, npcTransform.x, npcTransform.y, target.x, target.y, npcC, npcR, finalC, finalR, dc, dr, NPC_MOVE_SPEED * 2.0);
         npc.moving = true;
         
         if (isHorizontal) {
@@ -1889,10 +2033,10 @@ export class GameScene extends Scene {
     }
 
     gameAudio.playPush();
-    this.movePlayerTo(world, p, npcC, npcR);
+    this.movePlayerTo(world, p, npcC, npcR, dc, dr);
   }
 
-  private moveNpcTo(world: IWorld, npc: NpcState, nc: number, nr: number): void {
+  private moveNpcTo(world: IWorld, npc: NpcState, nc: number, nr: number, dc: number, dr: number): void {
     this.grid[npc.row][npc.col] = CELL_EMPTY;
     npc.col = nc; npc.row = nr;
     this.grid[nr][nc] = CELL_PLAYER;
@@ -1900,7 +2044,7 @@ export class GameScene extends Scene {
     const transform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
     if (transform) {
       const target = gridToWorld(nc, nr);
-      startMovement(npc.movement, transform.x, transform.y, target.x, target.y, NPC_MOVE_SPEED);
+      startMovement(npc.movement, transform.x, transform.y, target.x, target.y, npc.col - dc, npc.row - dr, nc, nr, dc, dr, NPC_MOVE_SPEED);
       npc.moving = true;
     }
   }
@@ -1941,14 +2085,14 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // 移动敌人（新的平滑移动方式）
   // ------------------------------------------------------------------
-  private moveEnemyTo(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
+  private moveEnemyTo(world: IWorld, enemy: EnemyState, nc: number, nr: number, dc: number, dr: number): void {
     this.grid[enemy.row][enemy.col] = CELL_EMPTY;
     enemy.col = nc; enemy.row = nr;
 
     const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
     if (transform) {
       const target = gridToWorld(nc, nr);
-      startMovement(enemy.movement, transform.x, transform.y, target.x, target.y, ENEMY_MOVE_SPEED);
+      startMovement(enemy.movement, transform.x, transform.y, target.x, target.y, enemy.col - dc, enemy.row - dr, nc, nr, dc, dr, ENEMY_MOVE_SPEED);
     }
   }
 
@@ -1959,7 +2103,7 @@ export class GameScene extends Scene {
       if (!inBounds(nc, nr)) continue;
       if (this.grid[nr][nc] !== CELL_EMPTY) continue;
       if (this.findEnemyAt(nc, nr)) continue;
-      this.moveEnemyTo(world, enemy, nc, nr);
+      this.moveEnemyTo(world, enemy, nc, nr, dir.dc, dir.dr);
       break;
     }
   }
@@ -1977,7 +2121,7 @@ export class GameScene extends Scene {
         const isPlayerCell = this.player.col === nc && this.player.row === nr;
         if (this.grid[nr][nc] !== CELL_EMPTY && !isPlayerCell) continue;
         if (this.findEnemyAt(nc, nr)) continue;
-        this.moveEnemyTo(world, enemy, nc, nr);
+        this.moveEnemyTo(world, enemy, nc, nr, dir.dc, dir.dr);
         return;
       }
     } else this.stepEnemyRandom(world, enemy);
@@ -1997,7 +2141,7 @@ export class GameScene extends Scene {
       const cell = this.grid[nr][nc];
       const isPlayerCell = this.player.col === nc && this.player.row === nr;
       if ((cell === CELL_EMPTY || isPlayerCell) && !this.findEnemyAt(nc, nr)) {
-        this.moveEnemyTo(world, enemy, nc, nr);
+        this.moveEnemyTo(world, enemy, nc, nr, dir.dc, dir.dr);
         return;
       }
       const isBlock = cell === CELL_BLOCK || cell === CELL_STAR_BLOCK || cell === CELL_HEART_BLOCK || cell === CELL_BOMB;
@@ -2035,7 +2179,7 @@ export class GameScene extends Scene {
       const cell = this.grid[nr][nc];
       const isPlayerCell = this.player.col === nc && this.player.row === nr;
       if ((cell === CELL_EMPTY || isPlayerCell) && !this.findEnemyAt(nc, nr)) {
-        this.moveEnemyTo(world, enemy, nc, nr);
+        this.moveEnemyTo(world, enemy, nc, nr, dir.dc, dir.dr);
         return;
       }
       const isGearPushable = cell === CELL_STAR_BLOCK || cell === CELL_HEART_BLOCK;
@@ -2053,7 +2197,7 @@ export class GameScene extends Scene {
         this.grid[br][bc] = cell;
         this.grid[nr][nc] = CELL_EMPTY;
         gameAudio.playPush();
-        this.moveEnemyTo(world, enemy, nc, nr);
+        this.moveEnemyTo(world, enemy, nc, nr, dir.dc, dir.dr);
         return;
       }
     }

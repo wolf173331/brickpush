@@ -1,13 +1,37 @@
 #!/bin/bash
-# 一键构建 + 生成 changelog + 提交到 GitHub
+# 一键构建 + 自动更新版本号 + 生成 changelog + 提交到 GitHub
 # 用法: ./release.sh "修复了xxx问题，新增了yyy功能"
 # 或者不带参数，脚本会提示输入
 
 set -e
 cd "$(dirname "$0")"
 
-# ── 读取版本号 ──────────────────────────────────────────
-VERSION=$(node -p "require('./package.json').version")
+# ── 自动更新版本号（末尾数+1）────────────────────────────
+echo "🔢 更新版本号..."
+
+CURRENT_VERSION=$(node -p "require('./package.json').version")
+echo "   当前版本: $CURRENT_VERSION"
+
+# 解析版本号 MAJOR.MINOR.PATCH
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+# PATCH + 1
+NEW_PATCH=$((PATCH + 1))
+NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+echo "   新版本: $NEW_VERSION"
+
+# 更新 package.json
+node -e "
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+pkg.version = '$NEW_VERSION';
+fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+console.log('   ✅ package.json 已更新');
+"
+
+# ── 读取更新后的版本号 ──────────────────────────────────
+VERSION=$NEW_VERSION
 DATE=$(date '+%Y-%m-%d')
 
 # ── 获取本次更新说明 ────────────────────────────────────
@@ -23,9 +47,13 @@ if [ -z "$MSG" ]; then
   MSG="常规更新"
 fi
 
-# ── 构建 ────────────────────────────────────────────────
 echo ""
-echo "🔨 构建中 (v${VERSION})..."
+echo "📦 发布版本: v${VERSION}"
+echo "📝 更新内容: ${MSG}"
+echo ""
+
+# ── 构建 ────────────────────────────────────────────────
+echo "🔨 构建中..."
 npm run build
 
 echo "📁 更新 docs/ (GitHub Pages)..."
@@ -37,29 +65,36 @@ cp public/assets/levels.json docs/assets/levels.json
 echo ""
 echo "📋 更新 CHANGELOG.md..."
 
-ENTRY="## [${VERSION}] - ${DATE}
+# 创建临时文件处理换行
+TMP=$(mktemp)
 
-${MSG}
-
-"
+# 写入新条目
+echo "## [${VERSION}] - ${DATE}" > "$TMP"
+echo "" >> "$TMP"
+echo "${MSG}" >> "$TMP"
+echo "" >> "$TMP"
 
 # 在第一个 ## 之前插入新条目
 if grep -q "^## \[" CHANGELOG.md 2>/dev/null; then
   # 已有条目，插入到第一个 ## 之前
-  TMP=$(mktemp)
-  awk -v entry="$ENTRY" '
+  awk '
     /^## \[/ && !done {
-      printf "%s", entry
+      while ((getline line < tmpfile) > 0) {
+        print line
+      }
+      close(tmpfile)
       done=1
     }
     { print }
-  ' CHANGELOG.md > "$TMP"
-  mv "$TMP" CHANGELOG.md
+  ' tmpfile="$TMP" CHANGELOG.md > "${TMP}.new"
+  mv "${TMP}.new" CHANGELOG.md
 else
-  # 没有条目，追加到文件末尾
-  echo "" >> CHANGELOG.md
-  echo "$ENTRY" >> CHANGELOG.md
+  # 没有条目，追加到文件顶部
+  cat CHANGELOG.md >> "$TMP"
+  mv "$TMP" CHANGELOG.md
 fi
+
+rm -f "$TMP"
 
 # ── Git 提交 ────────────────────────────────────────────
 echo ""
