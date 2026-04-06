@@ -56,6 +56,7 @@ export const ENEMY_TEXTURES: readonly string[] = [
 export const BOMB_EXPLOSION_DELAY = 4.5;
 export const BOMB_EXPLOSION_RANGE = 1;
 
+
 // ---- Score ----
 export const SCORE_BLOCK_CRUSH = 500;    // 方块压死怪物（基础，combo会翻倍）
 export const SCORE_BOMB_KILL   = 500;    // 炸弹杀怪（基础，combo会翻倍）
@@ -114,9 +115,9 @@ export const HUD_PADDING_X = 20;
 
 // ---- NPC Squirrel ----
 export const NPC_HP = 255;
-export const NPC_MOVE_COOLDOWN_MIN = 0.6;
-export const NPC_MOVE_COOLDOWN_MAX = 1.4;
-export const NPC_STUN_DURATION = 1.0;
+export const NPC_MOVE_COOLDOWN_MIN = 0.2;
+export const NPC_MOVE_COOLDOWN_MAX = 0.6;
+export const NPC_STUN_DURATION = 2.0;
 
 let npcSquirrelEnabled = true;
 export function isNpcSquirrelEnabled(): boolean { return npcSquirrelEnabled; }

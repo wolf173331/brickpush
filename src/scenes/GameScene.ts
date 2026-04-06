@@ -100,11 +100,26 @@ const H = GAME_HEIGHT;
 // ---- 移动速度配置 (像素/秒) ----
 const PLAYER_MOVE_SPEED = 360;  // 玩家移动速度
 const ENEMY_MOVE_SPEED = 280;   // 敌人移动速度
-const NPC_MOVE_SPEED = 240;     // NPC移动速度
+const NPC_MOVE_SPEED = 340;     // NPC移动速度
 const BLOCK_PUSH_SPEED = 400;   // 方块推动速度
 
 // ---- 转向配置 ----
 const REDIRECT_THRESHOLD = 0.5;  // 移动进度超过此值后不能转向（0.5 = 半个格子）
+
+//---随机主角颜色 ----
+const Character_Color_Index : number [] = [
+0xFF6600, //橙
+0x6600FF,   //紫：
+0xFF69B4,   //粉：
+0x00CCFF,   //天蓝：
+0x33CC33,   //草绿：
+0xFFCC00,   //金黄：
+0x990000,   //暗红：
+0x003366,  //深蓝：
+0xFFFFFF,   //白色
+];
+
+
 
 // ---- State interfaces ----
 
@@ -558,10 +573,13 @@ export class GameScene extends Scene {
         }
 
         // Player spawn
+        
         if (raw === CELL_P1_SPAWN) {
+          const MC_Random_Color = Math.floor(Math.random() * ((Character_Color_Index.length-1)-1));
           const eid = EntityBuilder.create(world, W, H)
             .withTransform({ x: pos.x, y: pos.y })
             .withSprite({ textureId: ASSETS.PLAYER1, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_PLAYER })
+            .withTint({ color: Character_Color_Index[MC_Random_Color] })
             .build();
           this.trackEntity(eid);
           this.grid[r][c] = CELL_PLAYER;
