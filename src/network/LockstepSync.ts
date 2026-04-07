@@ -39,7 +39,6 @@ export class LockstepSync {
   
   // 当前帧号（严格对齐）
   private currentFrame = 0;
-  private simulatingFrame = 0; // 实际模拟到的帧（考虑延迟）
   
   // 输入缓冲区
   private inputBuffer: Map<number, FrameInput> = new Map();

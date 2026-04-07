@@ -91,7 +91,7 @@ import {
   NPC_MOVE_COOLDOWN_MAX,
   NPC_STUN_DURATION,
 } from '../constants';
-import { getRunHp, getRunScore, setRunHp, setRunScore } from '../gameProgress';
+import { getRunHp, getRunScore, setRunHp, setRunScore, getPlayerColor } from '../gameProgress';
 import { gameAudio } from '../audio';
 
 const W = GAME_WIDTH;
@@ -105,21 +105,6 @@ const BLOCK_PUSH_SPEED = 400;   // 方块推动速度
 
 // ---- 转向配置 ----
 const REDIRECT_THRESHOLD = 0.5;  // 移动进度超过此值后不能转向（0.5 = 半个格子）
-
-//---随机主角颜色 ----
-const Character_Color_Index : number [] = [
-0xFF6600, //橙
-0x6600FF,   //紫：
-0xFF69B4,   //粉：
-0x00CCFF,   //天蓝：
-0x33CC33,   //草绿：
-0xFFCC00,   //金黄：
-0x990000,   //暗红：
-0x003366,  //深蓝：
-0xFFFFFF,   //白色
-];
-
-
 
 // ---- State interfaces ----
 
@@ -528,6 +513,7 @@ export class GameScene extends Scene {
   // Create entities from grid data
   // ------------------------------------------------------------------
   private createEntitiesFromGrid(world: IWorld): void {
+    console.log('[GameScene] createEntitiesFromGrid, 松鼠启用:', isNpcSquirrelEnabled());
     const levelData = LEVELS[this.currentLevelIndex];
     this.totalWaves = levelData?.enemyWaves ?? 1;
     this.enemiesPerWave = levelData?.enemiesPerWave ?? 3;
@@ -573,13 +559,12 @@ export class GameScene extends Scene {
         }
 
         // Player spawn
-        
         if (raw === CELL_P1_SPAWN) {
-          const MC_Random_Color = Math.floor(Math.random() * ((Character_Color_Index.length-1)-1));
+          const playerColor = getPlayerColor(); // 获取本局游戏的颜色（只随机一次）
           const eid = EntityBuilder.create(world, W, H)
             .withTransform({ x: pos.x, y: pos.y })
             .withSprite({ textureId: ASSETS.PLAYER1, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_PLAYER })
-            .withTint({ color: Character_Color_Index[MC_Random_Color] })
+            .withTint({ color: playerColor })
             .build();
           this.trackEntity(eid);
           this.grid[r][c] = CELL_PLAYER;

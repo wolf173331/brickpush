@@ -9,13 +9,13 @@
 
 import { GameScene } from './GameScene';
 import { LockstepSync, FrameInput, PlayerInput, ReplayData } from '../network/LockstepSync';
-import { setNpcSquirrelEnabled, gridToWorld, TILE_SIZE, ASSETS, Z_PLAYER, CELL_EMPTY } from '../constants';
-import { TransformComponent, EntityBuilder, UIEntityBuilder, SPRITE_COMPONENT, SpriteComponent } from 'agent-gamedev';
+import { setNpcSquirrelEnabled, gridToWorld, CELL_EMPTY } from '../constants';
+import { TransformComponent, UIEntityBuilder } from 'agent-gamedev';
 import type { IWorld } from 'agent-gamedev';
-import { globalEventBus } from 'agent-gamedev';
 import { InputSystem, KEYS } from 'agent-gamedev';
 
-// 确定性随机数（确保双方一致）
+// 确定性随机数（确保双方一致，预留用于AI同步）
+/*
 class DeterministicRandom {
   private seed: number;
   
@@ -39,14 +39,15 @@ class DeterministicRandom {
     return Math.floor(this.range(min, max + 1));
   }
 }
+*/
 
 export class LockstepGameScene extends GameScene {
   private sync: LockstepSync | null = null;
   private isHost = false;
   private isMultiplayer = false;
   
-  // 确定性随机
-  private rng: DeterministicRandom | null = null;
+  // 确定性随机（预留，用于录像回放时确定性AI）
+  // private rng: DeterministicRandom | null = null;
   
   // 玩家实体
   private p1Entity: any = null;
@@ -63,7 +64,8 @@ export class LockstepGameScene extends GameScene {
   
   // 游戏状态
   private gameStarted = false;
-  private frameCount = 0;
+  // private frameCount = 0;
+  private currentWorld: IWorld | null = null;
 
   constructor() {
     super();
@@ -73,7 +75,7 @@ export class LockstepGameScene extends GameScene {
   // 初始化
   // ========================================================================
 
-  async onEnter(world: IWorld, data?: any): void {
+  async onEnter(world: IWorld, data?: any): Promise<void> {
     console.log('[Lockstep] 进入帧同步游戏场景');
     
     this.isHost = data?.isHost ?? false;
@@ -165,7 +167,7 @@ export class LockstepGameScene extends GameScene {
 
   private startLocal(world: IWorld): void {
     console.log('[Lockstep] 本地模式');
-    this.rng = new DeterministicRandom(Date.now());
+    // this.rng = new DeterministicRandom(Date.now());
     this.gameStarted = true;
     
     // 移除 READY 遮罩
@@ -185,7 +187,7 @@ export class LockstepGameScene extends GameScene {
 
   private startReplay(world: IWorld, replay: ReplayData): void {
     console.log('[Lockstep] 回放模式');
-    this.rng = new DeterministicRandom(replay.seed);
+    // this.rng = new DeterministicRandom(replay.seed);
     this.isReplay = true;
     this.replayFrameIndex = 0;
     
@@ -213,7 +215,7 @@ export class LockstepGameScene extends GameScene {
   // ========================================================================
 
   private onLockstepFrame(world: IWorld, frame: number, inputs: FrameInput): void {
-    this.frameCount = frame;
+    // this.frameCount = frame;
     
     // 1. 更新玩家位置（确定性移动）
     this.updatePlayer(world, 1, inputs.p1);
@@ -223,11 +225,11 @@ export class LockstepGameScene extends GameScene {
     this.updateBlocks(world);
     
     // 3. 更新怪物（确定性 AI）
-    this.updateEnemies(world, frame);
+    this.stepEnemies(world, frame);
     
     // 4. 更新 HUD
     if (frame % 30 === 0) { // 每秒更新
-      this.updateHUD(world);
+      this.refreshHUD(world);
     }
   }
 
@@ -313,8 +315,8 @@ export class LockstepGameScene extends GameScene {
         block.x = pos.x;
         block.y = pos.y;
         
-        if (this.world) {
-          const transform = this.world.getComponent<TransformComponent>(block.entity, 'TransformComponent');
+        if (this.currentWorld) {
+          const transform = this.currentWorld.getComponent<TransformComponent>(block.entity, 'TransformComponent');
           if (transform) {
             transform.x = pos.x;
             transform.y = pos.y;
@@ -325,11 +327,11 @@ export class LockstepGameScene extends GameScene {
     }
   }
 
-  private updateBlocks(world: IWorld): void {
+  private updateBlocks(_world: IWorld): void {
     // 方块逻辑在 updatePlayer 中处理（推箱子）
   }
 
-  private updateEnemies(world: IWorld, frame: number): void {
+  private stepEnemies(_world: IWorld, _frame: number): void {
     // 确定性敌人 AI（简化版）
     // 实际应该实现完整的确定性 AI
   }
@@ -339,6 +341,8 @@ export class LockstepGameScene extends GameScene {
   // ========================================================================
 
   update(world: IWorld, deltaTime: number): void {
+    this.currentWorld = world;
+    
     if (!this.gameStarted && !this.isReplay) {
       // 等待连接
       return;
@@ -374,7 +378,7 @@ export class LockstepGameScene extends GameScene {
     }
   }
 
-  private handleLocalInput(world: IWorld, dt: number): void {
+  private handleLocalInput(_world: IWorld, _dt: number): void {
     // 本地模式直接处理
     // 这里简化处理，实际应该固定帧率
   }
@@ -383,16 +387,95 @@ export class LockstepGameScene extends GameScene {
   // UI
   // ========================================================================
 
-  private showConnectionUI(world: IWorld): void {
-    // 显示连接状态
+  private showConnectionUI(_world: IWorld): void {
+    // 显示连接状态背景（使用半透明黑色背景）
+    // 简化显示，只使用文本
   }
 
   private showSignalUI(world: IWorld, mode: 'host' | 'client' | 'answer', data?: string): void {
+    // 清除旧的UI
     // 显示信令交换 UI
-    // 复制粘贴 Offer/Answer
+    const titleText = mode === 'host' ? '创建房间' : (mode === 'client' ? '加入房间' : '等待连接');
+    
+    // 标题
+    const title = UIEntityBuilder.create(world, 960, 720)
+      .withUITransform({ anchor: 'top-center', y: 150, width: 500, height: 40 })
+      .withText({ text: titleText, fontSize: 24, color: 0xFFFFFF, align: 'center' })
+      .build();
+    (this as any).trackEntity(title);
+    
+    if (mode === 'host' && data) {
+      // 显示 Offer，等待 Answer
+      const label = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 200, width: 500, height: 30 })
+        .withText({ text: '复制下方代码发给对方，然后粘贴对方的回应：', fontSize: 14, color: 0xAAAAAA, align: 'center' })
+        .build();
+      (this as any).trackEntity(label);
+      
+      // Offer 显示区域（简化显示前100字符）
+      const offerShort = data.substring(0, 100) + '...';
+      const offerText = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 240, width: 550, height: 80 })
+        .withText({ text: offerShort, fontSize: 10, color: 0x88FF88, align: 'left' })
+        .build();
+      (this as any).trackEntity(offerText);
+      
+      // 输入框提示
+      const inputLabel = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 340, width: 500, height: 30 })
+        .withText({ text: '按 F12 打开控制台复制完整代码', fontSize: 12, color: 0xFFFF88, align: 'center' })
+        .build();
+      (this as any).trackEntity(inputLabel);
+      
+      console.log('%c[Lockstep] 完整 Offer 代码：', 'color: #88ff88; font-size: 14px');
+      console.log(data);
+      
+    } else if (mode === 'client') {
+      // 客人输入 Offer
+      const label = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 200, width: 500, height: 30 })
+        .withText({ text: '请对方创建房间，然后粘贴对方的代码：', fontSize: 14, color: 0xAAAAAA, align: 'center' })
+        .build();
+      (this as any).trackEntity(label);
+      
+      // 提示在控制台输入
+      const hint = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 280, width: 500, height: 60 })
+        .withText({ text: '在控制台输入：\njoinGame("粘贴对方的代码")', fontSize: 12, color: 0xFFFF88, align: 'center' })
+        .build();
+      (this as any).trackEntity(hint);
+      
+      // 暴露全局函数
+      (window as any).joinGame = (offerStr: string) => {
+        this.setupClient(this.currentWorld!, offerStr);
+      };
+      
+    } else if (mode === 'answer' && data) {
+      // 显示 Answer
+      const label = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 200, width: 500, height: 30 })
+        .withText({ text: '复制下方代码发给房主：', fontSize: 14, color: 0xAAAAAA, align: 'center' })
+        .build();
+      (this as any).trackEntity(label);
+      
+      const answerShort = data.substring(0, 100) + '...';
+      const answerText = UIEntityBuilder.create(world, 960, 720)
+        .withUITransform({ anchor: 'top-center', y: 240, width: 550, height: 80 })
+        .withText({ text: answerShort, fontSize: 10, color: 0x88FF88, align: 'left' })
+        .build();
+      (this as any).trackEntity(answerText);
+      
+      console.log('%c[Lockstep] 完整 Answer 代码：', 'color: #88ff88; font-size: 14px');
+      console.log(data);
+      
+      // 暴露全局函数给房主
+      (window as any).acceptAnswer = (answerStr: string) => {
+        this.sync?.acceptAnswer(JSON.parse(answerStr));
+      };
+    }
   }
 
-  private updateHUD(world: IWorld): void {
+  private refreshHUD(_world: IWorld): void {
     // 更新 HUD
   }
 

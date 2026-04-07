@@ -1,7 +1,10 @@
 import { Game, SceneManager, globalEventBus, globalAssets } from 'agent-gamedev';
 import { MenuScene, GameScene, GameOverScene, LeaderboardScene } from './scenes';
+import { MultiplayerMenuScene } from './scenes/MultiplayerMenuScene';
+import { NetGameScene } from './scenes/NetGameScene';
+import { LockstepGameScene } from './scenes/LockstepGameScene';
 import { GAME_WIDTH, GAME_HEIGHT, GAME_BG_COLOR, ASSETS, LEVELS, loadLevels, setCurrentLevelIndex } from './constants';
-import { resetRunHp, resetRunScore } from './gameProgress';
+import { resetRunHp, resetRunScore, resetPlayerColor } from './gameProgress';
 import { gameAudio } from './audio';
 
 const SVG_DIR = 'assets/svg';
@@ -63,6 +66,9 @@ export class MyGame extends Game {
     this.sceneManager.register('game', new GameScene());
     this.sceneManager.register('gameover', new GameOverScene());
     this.sceneManager.register('leaderboard', new LeaderboardScene());
+    this.sceneManager.register('multiplayer', new MultiplayerMenuScene());
+    this.sceneManager.register('netgame', new NetGameScene());
+    this.sceneManager.register('lockstep', new LockstepGameScene());
     console.log('Scenes registered');
 
     // Scene transition events
@@ -70,6 +76,7 @@ export class MyGame extends Game {
       setCurrentLevelIndex(0);
       resetRunScore();
       resetRunHp();
+      resetPlayerColor(); // 新游戏时重置主角颜色（重新随机）
       this.sceneManager.replace('game', this.getWorld());
     });
 
@@ -86,6 +93,18 @@ export class MyGame extends Game {
 
     globalEventBus.on('scene:leaderboard', () => {
       this.sceneManager.replace('leaderboard', this.getWorld());
+    });
+
+    globalEventBus.on('scene:multiplayer', () => {
+      this.sceneManager.replace('multiplayer', this.getWorld());
+    });
+
+    globalEventBus.on('scene:netgame', () => {
+      this.sceneManager.replace('netgame', this.getWorld());
+    });
+    
+    globalEventBus.on('scene:lockstep', () => {
+      this.sceneManager.replace('lockstep', this.getWorld());
     });
 
     // Start with menu

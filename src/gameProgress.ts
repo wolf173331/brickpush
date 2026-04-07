@@ -40,6 +40,37 @@ export function resetRunHp(): void {
   currentRunHp = DEFAULT_RUN_HP;
 }
 
+// ---- 主角颜色（每局游戏随机一次） ----
+
+let currentPlayerColor: number | null = null;
+
+// 主角可选颜色列表
+export const CHARACTER_COLOR_INDEX = [
+  0xFF6B6B, // 红色
+  0x4ECDC4, // 青色
+  0x45B7D1, // 蓝色
+  0x96CEB4, // 绿色
+  0xFFEAA7, // 黄色
+  0xDDA0DD, // 紫色
+  0xFFA07A, // 橙色
+  0x98D8C8, // 薄荷绿
+];
+
+/** 获取当前游戏的主角颜色（如果没有则随机生成） */
+export function getPlayerColor(): number {
+  if (currentPlayerColor === null) {
+    // 随机选择一个颜色
+    const randomIndex = Math.floor(Math.random() * CHARACTER_COLOR_INDEX.length);
+    currentPlayerColor = CHARACTER_COLOR_INDEX[randomIndex];
+  }
+  return currentPlayerColor;
+}
+
+/** 重置主角颜色（新游戏时调用） */
+export function resetPlayerColor(): void {
+  currentPlayerColor = null;
+}
+
 export function sanitizeLeaderboardName(input: string): string {
   const cleaned = input.replace(/[^A-Za-z]/g, '').slice(0, 10).toUpperCase();
   return cleaned;
