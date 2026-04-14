@@ -191,12 +191,14 @@ import {
   ENEMY_TYPE_FROG, ENEMY_TYPE_BLOB, ENEMY_TYPE_BOW, ENEMY_TYPE_GEAR,
 } from '../config';
 
-function randomEnemyCooldown(): number {
-  return ENEMY_MOVE_INTERVAL_MIN + Math.random() * (ENEMY_MOVE_INTERVAL_MAX - ENEMY_MOVE_INTERVAL_MIN);
+import type { RandomGenerator } from '../network/DeterministicRandom';
+
+function randomEnemyCooldown(rng: RandomGenerator = Math.random): number {
+  return ENEMY_MOVE_INTERVAL_MIN + rng() * (ENEMY_MOVE_INTERVAL_MAX - ENEMY_MOVE_INTERVAL_MIN);
 }
 
-export function getEnemyMoveCooldown(enemyType: number): number {
-  const base = randomEnemyCooldown();
+export function getEnemyMoveCooldown(enemyType: number, rng: RandomGenerator = Math.random): number {
+  const base = randomEnemyCooldown(rng);
   switch (enemyType) {
     case ENEMY_TYPE_FROG: return base * 1.6;
     case ENEMY_TYPE_BLOB: return base * 1.0;

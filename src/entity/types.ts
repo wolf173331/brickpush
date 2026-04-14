@@ -40,6 +40,22 @@ export interface NpcState {
   isInvincible: boolean;
 }
 
+export interface Player2State {
+  col: number;
+  row: number;
+  entity: EntityId;
+  moving: boolean;
+  cooldown: number;
+  score: number;
+  collectibles: number;
+  hp: number;
+  damageCooldown: number;
+  isInvincible: boolean;
+  pushDistance: number;
+  canBreakWalls: boolean;
+  inputLockTimer: number;
+}
+
 export interface BombState {
   col: number;
   row: number;

@@ -17,6 +17,8 @@ import {
 import type { PlayerState, NpcState, EnemyState } from '../entity/types';
 import { gameAudio } from '../audio';
 import { damageNpc } from './CombatSystem';
+import { shuffleArray } from '../network/DeterministicRandom';
+import type { RandomGenerator } from '../network/DeterministicRandom';
 
 export interface NpcContext {
   grid: number[][];
@@ -25,9 +27,11 @@ export interface NpcContext {
   pushBlock: (world: IWorld, fromC: number, fromR: number, toC: number, toR: number, cellType: number) => number;
   crushEnemy: (world: IWorld, p: PlayerState, enemy: EnemyState) => void;
   movePlayerTo: (world: IWorld, p: PlayerState, tc: number, tr: number) => void;
+  rng?: RandomGenerator;
 }
 
 export function updateNpc(world: IWorld, ctx: NpcContext, npc: NpcState, dt: number): void {
+  const rng = ctx.rng ?? Math.random;
   if (npc.damageCooldown > 0) {
     npc.damageCooldown -= dt;
     if (npc.damageCooldown <= 0) npc.isInvincible = false;
@@ -49,15 +53,15 @@ export function updateNpc(world: IWorld, ctx: NpcContext, npc: NpcState, dt: num
   const target = hearts[0];
 
   let dirs = [...ALL_DIRECTIONS];
-  if (Math.random() > 0.3) {
+  if (rng() > 0.3) {
     dirs.sort((a, b) => {
       const da = Math.abs((npc.col + a.dc) - target.c) + Math.abs((npc.row + a.dr) - target.r);
       const db = Math.abs((npc.col + b.dc) - target.c) + Math.abs((npc.row + b.dr) - target.r);
       return da - db;
     });
-    if (Math.random() < 0.25 && dirs.length > 1) [dirs[0], dirs[1]] = [dirs[1], dirs[0]];
+    if (rng() < 0.25 && dirs.length > 1) [dirs[0], dirs[1]] = [dirs[1], dirs[0]];
   } else {
-    dirs = dirs.sort(() => Math.random() - 0.5);
+    dirs = shuffleArray(dirs, rng);
   }
 
   for (const dir of dirs) {
@@ -65,24 +69,24 @@ export function updateNpc(world: IWorld, ctx: NpcContext, npc: NpcState, dt: num
     if (!inBounds(nc, nr)) continue;
     const cell = ctx.grid[nr][nc];
     if (cell === CELL_EMPTY || cell === CELL_SAFE) {
-      moveNpcTo(world, ctx, npc, nc, nr); break;
+      moveNpcTo(world, ctx, npc, nc, nr, rng); break;
     }
     if (cell === CELL_HEART_BLOCK) {
       const bc = nc + dir.dc, br = nr + dir.dr;
       if (inBounds(bc, br) && ctx.grid[br][bc] === CELL_EMPTY) {
         ctx.pushBlock(world, nc, nr, bc, br, CELL_HEART_BLOCK);
-        moveNpcTo(world, ctx, npc, nc, nr); break;
+        moveNpcTo(world, ctx, npc, nc, nr, rng); break;
       }
     }
     if (cell === CELL_BLOCK) {
       const bc = nc + dir.dc, br = nr + dir.dr;
       if (inBounds(bc, br) && ctx.grid[br][bc] === CELL_EMPTY) {
         ctx.pushBlock(world, nc, nr, bc, br, CELL_BLOCK);
-        moveNpcTo(world, ctx, npc, nc, nr); break;
+        moveNpcTo(world, ctx, npc, nc, nr, rng); break;
       }
     }
   }
-  npc.cooldown = NPC_MOVE_COOLDOWN_MIN + Math.random() * (NPC_MOVE_COOLDOWN_MAX - NPC_MOVE_COOLDOWN_MIN);
+  npc.cooldown = NPC_MOVE_COOLDOWN_MIN + rng() * (NPC_MOVE_COOLDOWN_MAX - NPC_MOVE_COOLDOWN_MIN);
 }
 
 export function tryPushNpc(
@@ -124,14 +128,14 @@ export function tryPushNpc(
   ctx.movePlayerTo(world, p, npcC, npcR);
 }
 
-export function moveNpcTo(world: IWorld, ctx: NpcContext, npc: NpcState, nc: number, nr: number): void {
+export function moveNpcTo(world: IWorld, ctx: NpcContext, npc: NpcState, nc: number, nr: number, rng: RandomGenerator = Math.random): void {
   ctx.grid[npc.row][npc.col] = CELL_EMPTY;
   npc.col = nc; npc.row = nr;
   ctx.grid[nr][nc] = CELL_PLAYER;
   const target = gridToWorld(nc, nr);
   const transform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
   if (transform) {
-    const duration = 0.18 + Math.random() * 0.1;
+    const duration = 0.18 + rng() * 0.1;
     globalTweens.to(transform, { x: target.x, y: target.y }, {
       duration, easing: Easing.easeOutQuad,
       onComplete: () => {

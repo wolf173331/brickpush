@@ -17,6 +17,8 @@ import {
 import type { EnemyState, PlayerState, NpcState } from '../entity/types';
 import { gameAudio } from '../audio';
 import { getEnemyMoveCooldown } from './EnemySpawner';
+import { shuffleArray } from '../network/DeterministicRandom';
+import type { RandomGenerator } from '../network/DeterministicRandom';
 
 export interface EnemyAIContext {
   grid: number[][];
@@ -27,9 +29,11 @@ export interface EnemyAIContext {
   findEnemyAt: (c: number, r: number) => EnemyState | null;
   damagePlayer: (world: IWorld) => void;
   damageNpc: (world: IWorld, npc: NpcState) => void;
+  rng?: RandomGenerator;
 }
 
 export function updateEnemies(world: IWorld, ctx: EnemyAIContext, dt: number): void {
+  const rng = ctx.rng ?? Math.random;
   for (const enemy of ctx.enemies) {
     if (enemy.dying) continue;
     if (!enemy.active) {
@@ -46,11 +50,11 @@ export function updateEnemies(world: IWorld, ctx: EnemyAIContext, dt: number): v
     if (enemy.stunTimer > 0) enemy.stunTimer -= dt;
     enemy.moveCooldown -= dt;
     if (enemy.moveCooldown > 0) continue;
-    enemy.moveCooldown = getEnemyMoveCooldown(enemy.type);
-    if (enemy.stunTimer > 0) { stepEnemyRandom(world, ctx, enemy); continue; }
+    enemy.moveCooldown = getEnemyMoveCooldown(enemy.type, rng);
+    if (enemy.stunTimer > 0) { stepEnemyRandom(world, ctx, enemy, rng); continue; }
     if (enemy.type === ENEMY_TYPE_BOW) stepEnemyBow(world, ctx, enemy);
     else if (enemy.type === ENEMY_TYPE_GEAR) stepEnemyGear(world, ctx, enemy);
-    else stepEnemyBasic(world, ctx, enemy);
+    else stepEnemyBasic(world, ctx, enemy, rng);
   }
 }
 
@@ -115,8 +119,8 @@ function moveEnemyBowJump(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState,
   });
 }
 
-function stepEnemyRandom(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): void {
-  const dirs = [...ALL_DIRECTIONS].sort(() => Math.random() - 0.5);
+function stepEnemyRandom(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState, rng: RandomGenerator): void {
+  const dirs = shuffleArray([...ALL_DIRECTIONS], rng);
   for (const dir of dirs) {
     const nc = enemy.col + dir.dc, nr = enemy.row + dir.dr;
     if (!inBounds(nc, nr)) continue;
@@ -126,7 +130,7 @@ function stepEnemyRandom(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState):
   }
 }
 
-function stepEnemyBasic(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): void {
+function stepEnemyBasic(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState, rng: RandomGenerator): void {
   if (enemy.type === ENEMY_TYPE_BLOB && ctx.player) {
     const dirs = [...ALL_DIRECTIONS].sort((a, b) => {
       const da = Math.abs(ctx.player!.col - (enemy.col + a.dc)) + Math.abs(ctx.player!.row - (enemy.row + a.dr));
@@ -142,12 +146,12 @@ function stepEnemyBasic(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): 
       moveEnemyTo(world, ctx, enemy, nc, nr); return;
     }
   } else {
-    stepEnemyRandom(world, ctx, enemy);
+    stepEnemyRandom(world, ctx, enemy, rng);
   }
 }
 
 function stepEnemyBow(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): void {
-  if (!ctx.player) { stepEnemyBasic(world, ctx, enemy); return; }
+  if (!ctx.player) { stepEnemyBasic(world, ctx, enemy, ctx.rng ?? Math.random); return; }
   const dirs = [...ALL_DIRECTIONS].sort((a, b) => {
     const da = Math.abs(ctx.player!.col - (enemy.col + a.dc)) + Math.abs(ctx.player!.row - (enemy.row + a.dr));
     const db = Math.abs(ctx.player!.col - (enemy.col + b.dc)) + Math.abs(ctx.player!.row - (enemy.row + b.dr));
@@ -172,7 +176,7 @@ function stepEnemyBow(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): vo
 }
 
 function stepEnemyGear(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState): void {
-  if (!ctx.player) { stepEnemyBasic(world, ctx, enemy); return; }
+  if (!ctx.player) { stepEnemyBasic(world, ctx, enemy, ctx.rng ?? Math.random); return; }
   const dc = ctx.player.col - enemy.col, dr = ctx.player.row - enemy.row;
   const primaryDirs = (Math.abs(dc) >= Math.abs(dr)
     ? [{ dc: Math.sign(dc), dr: 0 }, { dc: 0, dr: Math.sign(dr) }]

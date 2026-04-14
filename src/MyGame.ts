@@ -1,5 +1,5 @@
 import { Game, SceneManager, globalEventBus, globalAssets } from 'agent-gamedev';
-import { MenuScene, GameScene, GameOverScene, LeaderboardScene } from './scenes';
+import { MenuScene, GameScene, GameOverScene, LeaderboardScene, LobbyScene } from './scenes';
 import { GAME_WIDTH, GAME_HEIGHT, GAME_BG_COLOR, ASSETS, LEVELS, loadLevels, setCurrentLevelIndex } from './constants';
 import { resetRunHp, resetRunScore } from './gameProgress';
 import { gameAudio } from './audio';
@@ -63,6 +63,7 @@ export class MyGame extends Game {
     this.sceneManager.register('game', new GameScene());
     this.sceneManager.register('gameover', new GameOverScene());
     this.sceneManager.register('leaderboard', new LeaderboardScene());
+    this.sceneManager.register('lobby', new LobbyScene());
     console.log('Scenes registered');
 
     // Scene transition events
@@ -78,6 +79,17 @@ export class MyGame extends Game {
       resetRunScore();
       resetRunHp();
       this.sceneManager.replace('menu', this.getWorld());
+    });
+
+    globalEventBus.on('scene:lobby', () => {
+      this.sceneManager.replace('lobby', this.getWorld());
+    });
+
+    globalEventBus.on('scene:game-multiplayer', () => {
+      setCurrentLevelIndex(0);
+      resetRunScore();
+      resetRunHp();
+      this.sceneManager.replace('game', this.getWorld());
     });
 
     globalEventBus.on('scene:gameover', (data: { score: number; victoryType: string }) => {

@@ -37,21 +37,26 @@ export class MenuScene extends Scene {
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)
       .withUITransform({ anchor: 'center', y: 86, width: 240, height: 50 })
+      .withButton({ label: '联机游戏', onClick: 'scene:lobby', borderRadius: 8 })
+      .build());
+
+    this.trackEntity(UIEntityBuilder.create(world, W, H)
+      .withUITransform({ anchor: 'center', y: 150, width: 240, height: 50 })
       .withButton({ label: '查看排行榜', onClick: 'scene:leaderboard', borderRadius: 8 })
       .build());
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'center', y: 150, width: 500, height: 28 })
+      .withUITransform({ anchor: 'center', y: 210, width: 500, height: 28 })
       .withText({ text: '操作: WASD / 方向键 移动', fontSize: 18, color: PALETTE.SUBTITLE_WHITE, align: 'center' })
       .build());
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'center', y: 190, width: 500, height: 28 })
+      .withUITransform({ anchor: 'center', y: 250, width: 500, height: 28 })
       .withText({ text: '♥ 将心心方块横或竖串在一起即可通关!', fontSize: 16, color: PALETTE.HEART_RED, align: 'center' })
       .build());
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)
-      .withUITransform({ anchor: 'center', y: 230, width: 500, height: 28 })
+      .withUITransform({ anchor: 'center', y: 290, width: 500, height: 28 })
       .withText({ text: '推方块到边缘继续推 → 碎裂 / 爆炸!', fontSize: 14, color: PALETTE.SUBTITLE_WHITE, align: 'center' })
       .build());
 

@@ -293,3 +293,9 @@ export const ALL_DIRECTIONS = [DIR_UP, DIR_DOWN, DIR_LEFT, DIR_RIGHT];
 
 // ---- Touch ----
 export const TOUCH_ZONE_HEIGHT = 120;
+
+// ---- Multiplayer ----
+export const MULTIPLAYER_FRAME_RATE = 20; // 20 FPS lockstep
+export const MULTIPLAYER_FRAME_INTERVAL = 1 / MULTIPLAYER_FRAME_RATE; // 50ms
+export const MULTIPLAYER_INPUT_DELAY = 2; // 2 frames buffer
+export const MULTIPLAYER_TIMEOUT_MS = 3000; // 连接超时

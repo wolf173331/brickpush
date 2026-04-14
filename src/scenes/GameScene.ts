@@ -32,6 +32,7 @@ import {
   CELL_BOMB,
   CELL_ENEMY_SPAWN,
   CELL_P1_SPAWN,
+  CELL_P2_SPAWN,
   CELL_PLAYER,
   CELL_ITEM,
   CELL_SAFE,
@@ -66,10 +67,11 @@ import {
   isNpcSquirrelEnabled,
   NPC_HP,
   NPC_MOVE_COOLDOWN_MIN,
+  MULTIPLAYER_FRAME_INTERVAL,
 } from '../config';
 import { getRunHp, getRunScore, setRunHp, setRunScore } from '../gameProgress';
 import { gameAudio } from '../audio';
-import type { PlayerState, EnemyState, NpcState, BombState, GamePhase, VictoryType } from '../entity/types';
+import type { PlayerState, EnemyState, NpcState, BombState, GamePhase, VictoryType, Player2State } from '../entity/types';
 import { parseLevel, createFloor } from '../game/GridSystem';
 import { resolveEnemySpawnCells, getEnemyMoveCooldown } from '../game/EnemySpawner';
 import { checkHeartsConnected } from '../game/WinCondition';
@@ -85,7 +87,7 @@ import {
 } from '../game/HudSystem';
 import {
   isPushable, calculatePushPath,
-  destroyBlockAt, destroyWallAt, spawnBreakEffect, spawnItemAt, clearItemAt,
+  destroyWallAt, spawnBreakEffect, spawnItemAt, clearItemAt,
   pushBlock as _pushBlock, explodeSingleBomb as _explodeSingleBomb,
   pushBombUntilCollision as _pushBombUntilCollision,
   handleEdgePush as _handleEdgePush, collectItem as _collectItem,
@@ -93,13 +95,12 @@ import {
 } from '../game/BlockSystem';
 import { updateEnemies as _updateEnemies, type EnemyAIContext } from '../game/EnemyAI';
 import { updateNpc as _updateNpc, tryPushNpc as _tryPushNpc, type NpcContext } from '../game/NpcController';
+import { multiplayerState } from '../network/MultiplayerState';
+import type { PlayerAction } from '../network/types';
+import { seedRandom, type RandomGenerator } from '../network/DeterministicRandom';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
-
-// ---- State interfaces ----
-
-// ---- Helpers ----
 
 export class GameScene extends Scene {
   readonly name = 'GameScene';
@@ -113,6 +114,7 @@ export class GameScene extends Scene {
 
   // ---- Entities ----
   private player: PlayerState | null = null;
+  private player2: Player2State | null = null;
   private npc: NpcState | null = null;
   private enemies: EnemyState[] = [];
   private bombs: BombState[] = [];
@@ -153,10 +155,10 @@ export class GameScene extends Scene {
   // ---- Wave system ----
   private totalWaves = 1;
   private enemiesPerWave = 3;
-  private currentWave = 0;          // 已刷出的波数
-  private waveEnemyTypeIndex = 0;   // enemySequence 游标
-  private nextWaveTimer = 0;        // 距下一波刷新的倒计时
-  private readonly WAVE_INTERVAL = 18; // 每波间隔秒数
+  private currentWave = 0;
+  private waveEnemyTypeIndex = 0;
+  private nextWaveTimer = 0;
+  private readonly WAVE_INTERVAL = 18;
 
   // ---- Touch ----
   private touchDir: { dc: number; dr: number } | null = null;
@@ -164,6 +166,11 @@ export class GameScene extends Scene {
 
   // ---- Victory UI entities ----
   private victoryUIEntities: EntityId[] = [];
+
+  // ---- Multiplayer / lockstep ----
+  private isMultiplayer = false;
+  private rng: RandomGenerator = Math.random;
+  private lockstepAccumulator = 0;
 
   // ---- Context builders per i moduli ----
   private get blockCtx(): BlockContext {
@@ -179,12 +186,15 @@ export class GameScene extends Scene {
       combo: this.combo,
     };
   }
+
+  private get enemyAICtx(): EnemyAIContext {
     return {
       grid: this.grid, entityMap: this.entityMap,
       player: this.player, npc: this.npc, enemies: this.enemies,
       findEnemyAt: (c, r) => this.findEnemyAt(c, r),
       damagePlayer: (world) => this.damagePlayer(world),
       damageNpc: (world, npc) => this.damageNpc(world, npc),
+      rng: this.rng,
     };
   }
 
@@ -195,11 +205,21 @@ export class GameScene extends Scene {
       pushBlock: (world, fC, fR, tC, tR, ct) => this.pushBlock(world, fC, fR, tC, tR, ct),
       crushEnemy: (world, p, enemy) => this.crushEnemy(world, p, enemy),
       movePlayerTo: (world, p, tc, tr) => this.movePlayerTo(world, p, tc, tr),
+      rng: this.rng,
     };
   }
+
   onEnter(world: IWorld, _data?: SceneTransitionData): void {
     globalTheme.setTheme('retro');
     this.currentLevelIndex = getCurrentLevelIndex();
+    this.isMultiplayer = multiplayerState.isMultiplayer;
+
+    if (this.isMultiplayer) {
+      const seeded = seedRandom(multiplayerState.gameSeed);
+      this.rng = seeded.random;
+    } else {
+      this.rng = Math.random;
+    }
 
     this.resetState();
     this.timeLeft = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
@@ -210,6 +230,12 @@ export class GameScene extends Scene {
     this.createHUD(world);
     this.createReadyOverlay(world);
     this.createTouchControls(world);
+
+    if (this.isMultiplayer) {
+      this.lockstepAccumulator = 0;
+      multiplayerState.lockstep?.start();
+      multiplayerState.lockstep?.prefetchEmptyFrames(4);
+    }
   }
 
   private registerNextLevelHandler(world: IWorld): void {
@@ -233,6 +259,7 @@ export class GameScene extends Scene {
       this.nonGridEntities.clear();
     }
     this.player = null;
+    this.player2 = null;
     this.npc = null;
     this.enemies = [];
     this.bombs = [];
@@ -252,6 +279,7 @@ export class GameScene extends Scene {
     this.currentWave = 0;
     this.waveEnemyTypeIndex = 0;
     this.nextWaveTimer = 0;
+    this.lockstepAccumulator = 0;
   }
 
   // ------------------------------------------------------------------
@@ -269,7 +297,6 @@ export class GameScene extends Scene {
   // Create entities from grid data
   // ------------------------------------------------------------------
   private createEntitiesFromGrid(world: IWorld): void {
-    // 读取关卡波次配置
     const levelData = LEVELS[this.currentLevelIndex];
     this.totalWaves = levelData?.enemyWaves ?? 1;
     this.enemiesPerWave = levelData?.enemiesPerWave ?? 3;
@@ -281,7 +308,6 @@ export class GameScene extends Scene {
         const raw = this.grid[r][c];
         const pos = gridToWorld(c, r);
 
-        // Walls
         if (raw === CELL_WALL) {
           const eid = EntityBuilder.create(world, W, H)
             .withTransform({ x: pos.x, y: pos.y })
@@ -291,7 +317,6 @@ export class GameScene extends Scene {
           this.entityMap.set(gridKey(c, r), eid);
         }
 
-        // Blocks (normal / star / heart)
         if (raw === CELL_BLOCK || raw === CELL_STAR_BLOCK || raw === CELL_HEART_BLOCK) {
           const tex = raw === CELL_STAR_BLOCK ? ASSETS.STAR_BLOCK
             : raw === CELL_HEART_BLOCK ? ASSETS.HEART_BLOCK : ASSETS.BLOCK;
@@ -303,7 +328,6 @@ export class GameScene extends Scene {
           this.entityMap.set(gridKey(c, r), eid);
         }
 
-        // Bombs
         if (raw === CELL_BOMB) {
           const eid = EntityBuilder.create(world, W, H)
             .withTransform({ x: pos.x, y: pos.y })
@@ -314,7 +338,6 @@ export class GameScene extends Scene {
           this.bombs.push({ col: c, row: r, entity: eid, exploded: false });
         }
 
-        // Player spawn
         if (raw === CELL_P1_SPAWN) {
           const eid = EntityBuilder.create(world, W, H)
             .withTransform({ x: pos.x, y: pos.y })
@@ -331,8 +354,7 @@ export class GameScene extends Scene {
             inputLockTimer: 0,
           };
 
-          // 松鼠 NPC：生成在玩家右边一格
-          if (isNpcSquirrelEnabled()) {
+          if (!this.isMultiplayer && isNpcSquirrelEnabled()) {
             const nc = c + 1;
             const nr = r;
             if (inBounds(nc, nr) && this.grid[nr][nc] === CELL_EMPTY) {
@@ -342,7 +364,7 @@ export class GameScene extends Scene {
                 .withSprite({ textureId: ASSETS.PLAYER2, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_PLAYER })
                 .build();
               this.trackEntity(neid);
-              this.grid[nr][nc] = CELL_PLAYER; // 占位
+              this.grid[nr][nc] = CELL_PLAYER;
               this.npc = {
                 col: nc, row: nr, entity: neid,
                 hp: NPC_HP, cooldown: NPC_MOVE_COOLDOWN_MIN,
@@ -353,14 +375,30 @@ export class GameScene extends Scene {
           }
         }
 
-        // CELL_ENEMY_SPAWN(6) 已从地图移除，忽略
+        if (raw === CELL_P2_SPAWN && this.isMultiplayer) {
+          const eid = EntityBuilder.create(world, W, H)
+            .withTransform({ x: pos.x, y: pos.y })
+            .withSprite({ textureId: ASSETS.PLAYER2, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_PLAYER })
+            .build();
+          this.trackEntity(eid);
+          this.grid[r][c] = CELL_PLAYER;
+          this.player2 = {
+            col: c, row: r, entity: eid,
+            moving: false, cooldown: 0, score: 0, collectibles: 0,
+            hp: PLAYER_MAX_HP,
+            damageCooldown: 0, isInvincible: false,
+            pushDistance: PLAYER_PUSH_DISTANCE, canBreakWalls: false,
+            inputLockTimer: 0,
+          };
+        }
+
         if (raw === CELL_ENEMY_SPAWN) {
           this.grid[r][c] = CELL_EMPTY;
         }
       }
     }
-    // 第一波在 activateEnemies 时刷出
   }
+
 
   /** 刷出下一波敌人 */
   private spawnNextWave(world: IWorld): void {
@@ -377,9 +415,8 @@ export class GameScene extends Scene {
       this.waveEnemyTypeIndex++;
     }
 
-    this.spawnEnemies(world, types, false); // 直接激活
+    this.spawnEnemies(world, types, false);
 
-    // 设置下一波计时器（最后一波不需要）
     if (this.currentWave < this.totalWaves) {
       this.nextWaveTimer = this.WAVE_INTERVAL;
     }
@@ -404,7 +441,7 @@ export class GameScene extends Scene {
       this.grid[spawn.row][spawn.col] = CELL_ENEMY_SPAWN;
       this.enemies.push({
         col: spawn.col, row: spawn.row, entity: eid,
-        type, active: activate, moveCooldown: getEnemyMoveCooldown(type),
+        type, active: activate, moveCooldown: getEnemyMoveCooldown(type, this.rng),
         stunTimer: 0,
         activateTimer: activate ? 0 : ENEMY_SPAWN_ACTIVATE_DELAY,
         dying: false,
@@ -422,15 +459,13 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // HUD (single-player) - delegates to HudSystem
+  // HUD
   // ------------------------------------------------------------------
   private createHUD(world: IWorld): void {
     const initHp = this.player?.hp ?? getRunHp();
     this.hudEntities = _createHUD(world, this.currentLevelIndex, initHp, (eid) => this.trackEntity(eid));
   }
-  // ------------------------------------------------------------------
-  // READY overlay - delegates to HudSystem
-  // ------------------------------------------------------------------
+
   private createReadyOverlay(world: IWorld): void {
     this.readyEntity = _createReadyOverlay(world, (eid) => this.trackEntity(eid));
   }
@@ -481,27 +516,11 @@ export class GameScene extends Scene {
     }
 
     if (this.phase === 'playing') {
-      this.syncRunProgress();
-      // Update time
-      if (this.timeLeft > 0) {
-        this.timeLeft -= dt;
-        if (this.timeLeft <= 0) {
-          this.timeLeft = 0;
-          this.gameOver(world, 'time');
-        }
+      if (this.isMultiplayer) {
+        this.updateMultiplayer(world, dt);
+      } else {
+        this.updateSinglePlayer(world, dt);
       }
-
-      this.updateEnemies(world, dt);
-      this.updateWaves(world, dt);
-      // combo 窗口计时
-      if (this.comboTimer > 0) {
-        this.comboTimer -= dt;
-        if (this.comboTimer <= 0) this.comboCount = 0;
-      }
-      this.handlePlayerInput(world, dt);
-      this.updateNpc(world, dt);
-      this.updateHUD(world);
-      this.checkComplete(world);
       return;
     }
 
@@ -510,7 +529,6 @@ export class GameScene extends Scene {
       if (this.completeTimer <= 0 && !this.completionHandled) {
         this.completionHandled = true;
         const hasNextLevel = LEVELS.length > 0 && this.currentLevelIndex < LEVELS.length - 1;
-        // 有下一关时，等待玩家点击"下一关"按钮，不自动跳转
         if (this.victoryType === 'none' || !hasNextLevel) {
           const score = this.getResolvedScore();
           setRunScore(score);
@@ -525,11 +543,153 @@ export class GameScene extends Scene {
     }
   }
 
+  private updateSinglePlayer(world: IWorld, dt: number): void {
+    this.syncRunProgress();
+    if (this.timeLeft > 0) {
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) {
+        this.timeLeft = 0;
+        this.gameOver(world, 'time');
+      }
+    }
+
+    this.updateEnemies(world, dt);
+    this.updateWaves(world, dt);
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.comboCount = 0;
+    }
+    this.handlePlayerInput(world, dt);
+    this.updateNpc(world, dt);
+    this.updateHUD(world);
+    this.checkComplete(world);
+  }
+
+  private updateMultiplayer(world: IWorld, dt: number): void {
+    this.lockstepAccumulator += dt;
+
+    // 收集本地输入并发送
+    const lockstep = multiplayerState.lockstep;
+    if (lockstep) {
+      const localActions = this.collectLocalInput(world);
+      const packet = lockstep.recordLocalInput(localActions);
+      if (multiplayerState.peer?.isOpen) {
+        const msg: PlayerAction[] = packet.actions;
+        multiplayerState.peer.send(JSON.stringify({
+          type: 'input',
+          frame: packet.frame,
+          playerId: multiplayerState.localPlayerId,
+          actions: msg,
+        }));
+      }
+    }
+
+    // 尝试推进 lockstep 帧
+    while (lockstep && lockstep.canAdvance() && this.lockstepAccumulator >= MULTIPLAYER_FRAME_INTERVAL) {
+      this.lockstepAccumulator -= MULTIPLAYER_FRAME_INTERVAL;
+      const frameInputs = lockstep.advance();
+      if (frameInputs) {
+        this.applyLockstepFrame(world, MULTIPLAYER_FRAME_INTERVAL, frameInputs);
+      }
+    }
+
+    // 若长时间没有推进，进行平滑的 HUD 更新（不推进游戏逻辑）
+    this.updateHUD(world);
+
+    // 超时检测
+    if (multiplayerState.peer && !multiplayerState.peer.isOpen && multiplayerState.connected) {
+      multiplayerState.cleanup();
+      this.showDisconnectText(world);
+      setTimeout(() => globalEventBus.emit('scene:menu'), 2000);
+    }
+  }
+
+  private collectLocalInput(world: IWorld): PlayerAction[] {
+    const p = multiplayerState.localPlayerId === 0 ? this.player : this.player2;
+    if (!p) return [{ type: 'none' }];
+
+    if (p.damageCooldown > 0) { p.damageCooldown -= Time.deltaTime; if (p.damageCooldown <= 0) p.isInvincible = false; }
+    if (p.inputLockTimer > 0) { p.inputLockTimer -= Time.deltaTime; return [{ type: 'none' }]; }
+    if (p.cooldown > 0) { p.cooldown -= Time.deltaTime; return [{ type: 'none' }]; }
+    if (p.moving) return [{ type: 'none' }];
+
+    const input = world.getSystem<InputSystem>('InputSystem');
+    if (!input) return [{ type: 'none' }];
+
+    let dc = 0; let dr = 0;
+    if (multiplayerState.localPlayerId === 0) {
+      if (input.isKeyDown(KEYS.W) || input.isKeyDown(KEYS.UP)) dr = -1;
+      else if (input.isKeyDown(KEYS.S) || input.isKeyDown(KEYS.DOWN)) dr = 1;
+      else if (input.isKeyDown(KEYS.A) || input.isKeyDown(KEYS.LEFT)) dc = -1;
+      else if (input.isKeyDown(KEYS.D) || input.isKeyDown(KEYS.RIGHT)) dc = 1;
+    } else {
+      if (input.isKeyDown(KEYS.UP)) dr = -1;
+      else if (input.isKeyDown(KEYS.DOWN)) dr = 1;
+      else if (input.isKeyDown(KEYS.LEFT)) dc = -1;
+      else if (input.isKeyDown(KEYS.RIGHT)) dc = 1;
+    }
+
+    if (dc === 0 && dr === 0 && this.touchDir) {
+      dc = this.touchDir.dc; dr = this.touchDir.dr; this.touchDir = null;
+    }
+
+    if (dc !== 0 || dr !== 0) {
+      return [{ type: 'move', dc, dr }];
+    }
+    return [{ type: 'none' }];
+  }
+
+  private applyLockstepFrame(world: IWorld, dt: number, frameInputs: { frame: number; inputs: Map<0 | 1, PlayerAction[]> }): void {
+    this.syncRunProgress();
+    if (this.timeLeft > 0) {
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) {
+        this.timeLeft = 0;
+        this.gameOver(world, 'time');
+        return;
+      }
+    }
+
+    this.updateEnemies(world, dt);
+    this.updateWaves(world, dt);
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.comboCount = 0;
+    }
+
+    // 应用玩家输入
+    const pids: Array<0 | 1> = [0, 1];
+    for (const pid of pids) {
+      const actions = frameInputs.inputs.get(pid);
+      if (!actions) continue;
+      for (const action of actions) {
+        if (action.type === 'move') {
+          if (pid === 0 && this.player) {
+            this.tryMovePlayer(world, this.player, action.dc, action.dr);
+          } else if (pid === 1 && this.player2) {
+            this.tryMovePlayer2(world, this.player2, action.dc, action.dr);
+          }
+        }
+      }
+    }
+
+    this.updateNpc(world, dt);
+    this.checkComplete(world);
+  }
+
+  private showDisconnectText(world: IWorld): void {
+    const eid = UIEntityBuilder.create(world, W, H)
+      .withUITransform({ anchor: 'center', y: -20, width: 500, height: 80 })
+      .withText({ text: '连接已断开', fontSize: 40, color: 0xff4444, align: 'center', zIndex: Z_UI_POPUP })
+      .build();
+    this.trackEntity(eid);
+    this.victoryUIEntities.push(eid);
+  }
+
   // ------------------------------------------------------------------
   // Activate enemies
   // ------------------------------------------------------------------
   private activateEnemies(world: IWorld): void {
-    // 刷出第一波
     this.spawnNextWave(world);
   }
 
@@ -540,13 +700,13 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Player input (single player: WASD + Arrows + Touch)
+  // Player input (single player)
   // ------------------------------------------------------------------
   private handlePlayerInput(world: IWorld, dt: number): void {
+    if (this.isMultiplayer) return;
     const p = this.player;
     if (!p) return;
 
-    // Update damage cooldown
     if (p.damageCooldown > 0) {
       p.damageCooldown -= dt;
       if (p.damageCooldown <= 0) {
@@ -554,7 +714,6 @@ export class GameScene extends Scene {
       }
     }
 
-    // 受伤后短暂锁定输入
     if (p.inputLockTimer > 0) {
       p.inputLockTimer -= dt;
       return;
@@ -569,13 +728,11 @@ export class GameScene extends Scene {
     let dc = 0;
     let dr = 0;
 
-    // WASD
     if (input.isKeyDown(KEYS.W) || input.isKeyDown(KEYS.UP)) dr = -1;
     else if (input.isKeyDown(KEYS.S) || input.isKeyDown(KEYS.DOWN)) dr = 1;
     else if (input.isKeyDown(KEYS.A) || input.isKeyDown(KEYS.LEFT)) dc = -1;
     else if (input.isKeyDown(KEYS.D) || input.isKeyDown(KEYS.RIGHT)) dc = 1;
 
-    // Touch fallback
     if (dc === 0 && dr === 0 && this.touchDir) {
       dc = this.touchDir.dc;
       dr = this.touchDir.dr;
@@ -588,7 +745,7 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Try to move player
+  // Try to move player (P1)
   // ------------------------------------------------------------------
   private tryMovePlayer(world: IWorld, p: PlayerState, dc: number, dr: number): void {
     const tc = p.col + dc;
@@ -597,38 +754,31 @@ export class GameScene extends Scene {
 
     const targetCell = this.grid[tr][tc];
 
-    // ---- 首先检查目标位置是否有敌人 ----
     const enemy = this.findEnemyAt(tc, tr);
     if (enemy) {
       if (!enemy.active) {
-        // inactive 敌人（灰球状态）：玩家可以穿过，不扣血
-        // 继续往下走正常移动逻辑
+        // inactive enemy: pass through
       } else {
-        // active 敌人：受到伤害，不能移动
         this.damagePlayer(world);
         p.cooldown = PLAYER_MOVE_COOLDOWN;
         return;
       }
     }
 
-    // ---- 检查目标位置是否是 NPC（吃了 powerup 才能推） ----
     if (this.npc && this.npc.col === tc && this.npc.row === tr) {
       if (p.canBreakWalls && !this.npc.isInvincible) {
         this.tryPushNpc(world, p, tc, tr, dc, dr);
       } else {
-        // 没有 powerup 或 NPC 在硬直中，不能推
         p.cooldown = PLAYER_MOVE_COOLDOWN;
       }
       return;
     }
 
-    // ---- EMPTY or SAFE: just move ----
     if (targetCell === CELL_EMPTY || targetCell === CELL_SAFE) {
       this.movePlayerTo(world, p, tc, tr);
       return;
     }
 
-    // ---- ITEM: collect and move ----
     if (targetCell === CELL_ITEM) {
       this.collectItem(world, p, tc, tr);
       this.movePlayerTo(world, p, tc, tr);
@@ -649,15 +799,10 @@ export class GameScene extends Scene {
       return;
     }
 
-    // ---- Pushable blocks: BLOCK / STAR / HEART ----
     if (this.isPushable(targetCell)) {
-      // 计算砖块可以推动的最终位置
-      const { finalC, finalR, distance } = this.calculatePushPath(
-        tc, tr, dc, dr, p.pushDistance
-      );
+      const { finalC, finalR, distance } = this.calculatePushPath(tc, tr, dc, dr, p.pushDistance);
 
       if (distance > 0) {
-        // 先锁定路径上的敌人（立即 dying，不给移动机会）
         for (let i = 1; i <= distance; i++) {
           const checkC = tc + dc * i;
           const checkR = tr + dr * i;
@@ -666,66 +811,104 @@ export class GameScene extends Scene {
             this.crushEnemy(world, p, enemyInPath);
           }
         }
-
-        // 再推动砖块
         this.pushBlock(world, tc, tr, finalC, finalR, targetCell);
         this.movePlayerTo(world, p, tc, tr);
         return;
       } else {
-        // 无法推动，使用边缘推动机制
         this.handleEdgePush(world, p, tc, tr, targetCell, dc, dr);
         return;
       }
     }
-
-    // ---- WALL or other: can't move ----
-  }
-
-  // ---- BlockSystem delegates (usati internamente da tryMovePlayer e altri) ----
-  private isPushable(cell: number): boolean { return isPushable(cell); }
-  private calculatePushPath(sC: number, sR: number, dc: number, dr: number, max: number) { return calculatePushPath(this.blockCtx, sC, sR, dc, dr, max); }
-  private destroyWallAt(world: IWorld, c: number, r: number) { destroyWallAt(world, this.blockCtx, c, r); }
-  private spawnBreakEffect(world: IWorld, c: number, r: number, color: number) { spawnBreakEffect(world, this.blockCtx, c, r, color); }
-  private spawnItemAt(world: IWorld, c: number, r: number, tex: string) { spawnItemAt(world, this.blockCtx, c, r, tex); }
-  private pushBlock(world: IWorld, fC: number, fR: number, tC: number, tR: number, ct: number) { return _pushBlock(world, this.blockCtx, fC, fR, tC, tR, ct); }
-  private pushBombUntilCollision(world: IWorld, p: PlayerState, bC: number, bR: number, dc: number, dr: number) {
-    _pushBombUntilCollision(world, this.blockCtx, p, bC, bR, dc, dr, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr));
-  }
-  private handleEdgePush(world: IWorld, p: PlayerState, bC: number, bR: number, ct: number, _dc: number, _dr: number) {
-    _handleEdgePush(world, this.blockCtx, p, bC, bR, ct, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr), (w, c, r, v, col) => this.spawnScorePopup(w, c, r, v, col));
-  }
-  private collectItem(world: IWorld, p: PlayerState, c: number, r: number) {
-    _collectItem(world, this.blockCtx, p, c, r, (w, c2, r2, v, col) => this.spawnScorePopup(w, c2, r2, v, col), (w, c2, r2, t, col) => this.spawnPowerupText(w, c2, r2, t, col));
-  }
-  private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number) {
-    _killEnemyScore(world, p, this.combo, ec, er, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
-  // Move player entity to new grid cell
+  // Try to move player 2 (multiplayer)
   // ------------------------------------------------------------------
-  private movePlayerTo(world: IWorld, p: PlayerState, tc: number, tr: number): void {
-    // 立即更新逻辑状态
-    // Restore old cell: safe zone keeps CELL_SAFE, otherwise CELL_EMPTY
-    this.grid[p.row][p.col] = this.safeZones.has(gridKey(p.col, p.row)) ? CELL_SAFE : CELL_EMPTY;
+  private tryMovePlayer2(world: IWorld, p2: Player2State, dc: number, dr: number): void {
+    const tc = p2.col + dc;
+    const tr = p2.row + dr;
+    if (!inBounds(tc, tr)) return;
+
+    const targetCell = this.grid[tr][tc];
+
+    const enemy = this.findEnemyAt(tc, tr);
+    if (enemy) {
+      if (!enemy.active) {
+        // pass through
+      } else {
+        this.damagePlayer(world); // shared HP
+        p2.cooldown = PLAYER_MOVE_COOLDOWN;
+        return;
+      }
+    }
+
+    if (this.player && this.player.col === tc && this.player.row === tr) {
+      p2.cooldown = PLAYER_MOVE_COOLDOWN;
+      return;
+    }
+
+    if (targetCell === CELL_EMPTY || targetCell === CELL_SAFE) {
+      this.movePlayer2To(world, p2, tc, tr);
+      return;
+    }
+
+    if (targetCell === CELL_ITEM) {
+      this.collectItemAsPlayer2(world, p2, tc, tr);
+      this.movePlayer2To(world, p2, tc, tr);
+      return;
+    }
+
+    if (targetCell === CELL_WALL && p2.canBreakWalls) {
+      if (this.player) this.player.score += SCORE_WALL_BREAK;
+      this.spawnScorePopup(world, tc, tr, SCORE_WALL_BREAK, PALETTE.BREAK_WHITE);
+      this.destroyWallAt(world, tc, tr);
+      this.spawnBreakEffect(world, tc, tr, 0x333333);
+      this.movePlayer2To(world, p2, tc, tr);
+      return;
+    }
+
+    if (targetCell === CELL_BOMB) {
+      this.pushBombUntilCollisionPlayer2(world, p2, tc, tr, dc, dr);
+      return;
+    }
+
+    if (this.isPushable(targetCell)) {
+      const { finalC, finalR, distance } = this.calculatePushPath(tc, tr, dc, dr, p2.pushDistance);
+
+      if (distance > 0) {
+        for (let i = 1; i <= distance; i++) {
+          const checkC = tc + dc * i;
+          const checkR = tr + dr * i;
+          const enemyInPath = this.findEnemyAt(checkC, checkR);
+          if (enemyInPath && this.player) {
+            this.crushEnemy(world, this.player, enemyInPath);
+          }
+        }
+        this.pushBlock(world, tc, tr, finalC, finalR, targetCell);
+        this.movePlayer2To(world, p2, tc, tr);
+        return;
+      } else {
+        this.handleEdgePushPlayer2(world, p2, tc, tr, targetCell, dc, dr);
+        return;
+      }
+    }
+  }
+
+  private movePlayer2To(world: IWorld, p2: Player2State, tc: number, tr: number): void {
+    this.grid[p2.row][p2.col] = this.safeZones.has(gridKey(p2.col, p2.row)) ? CELL_SAFE : CELL_EMPTY;
     this.grid[tr][tc] = CELL_PLAYER;
 
-    p.col = tc;
-    p.row = tr;
-    p.cooldown = PLAYER_MOVE_COOLDOWN;
-    p.moving = true;
+    p2.col = tc;
+    p2.row = tr;
+    p2.cooldown = PLAYER_MOVE_COOLDOWN;
+    p2.moving = true;
     gameAudio.playWalk();
 
-    // 动画表现：移动实体到新位置
     const target = gridToWorld(tc, tr);
-    const transform = world.getComponent<TransformComponent>(p.entity, TRANSFORM_COMPONENT);
+    const transform = world.getComponent<TransformComponent>(p2.entity, TRANSFORM_COMPONENT);
     if (transform) {
-      // 立即设置最终位置
       transform.x = target.x;
       transform.y = target.y;
-
-      // 添加轻微的弹出效果作为视觉反馈
-      // 轻微缩放效果（简单动画，不使用yoyo和repeat）
       const originalScaleX = transform.scaleX;
       const originalScaleY = transform.scaleY;
       globalTweens.to(transform, { scaleX: 1.05, scaleY: 1.05 }, {
@@ -735,10 +918,88 @@ export class GameScene extends Scene {
           globalTweens.to(transform, { scaleX: originalScaleX, scaleY: originalScaleY }, {
             duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
             easing: Easing.easeInQuad,
-            onComplete: () => {
-              // 动画完成，可以接受新的移动输入
-              p.moving = false;
-            }
+            onComplete: () => { p2.moving = false; }
+          });
+        }
+      });
+    } else {
+      p2.moving = false;
+    }
+  }
+
+
+  // ---- BlockSystem delegates ----
+  private isPushable(cell: number): boolean { return isPushable(cell); }
+  private calculatePushPath(sC: number, sR: number, dc: number, dr: number, max: number) { return calculatePushPath(this.blockCtx, sC, sR, dc, dr, max); }
+  private destroyWallAt(world: IWorld, c: number, r: number) { destroyWallAt(world, this.blockCtx, c, r); }
+  private spawnBreakEffect(world: IWorld, c: number, r: number, color: number) { spawnBreakEffect(world, this.blockCtx, c, r, color); }
+  private spawnItemAt(world: IWorld, c: number, r: number, tex: string) { spawnItemAt(world, this.blockCtx, c, r, tex); }
+  private pushBlock(world: IWorld, fC: number, fR: number, tC: number, tR: number, ct: number) { return _pushBlock(world, this.blockCtx, fC, fR, tC, tR, ct); }
+  private pushBombUntilCollision(world: IWorld, p: PlayerState, bC: number, bR: number, dc: number, dr: number) {
+    _pushBombUntilCollision(world, this.blockCtx, p, bC, bR, dc, dr, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr));
+  }
+  private pushBombUntilCollisionPlayer2(world: IWorld, p2: Player2State, bC: number, bR: number, dc: number, dr: number) {
+    _pushBombUntilCollision(world, this.blockCtx, this.player!, bC, bR, dc, dr, (w, _pl, tc, tr) => this.movePlayer2To(w, p2, tc, tr));
+  }
+  private handleEdgePush(world: IWorld, p: PlayerState, bC: number, bR: number, ct: number, _dc: number, _dr: number) {
+    _handleEdgePush(world, this.blockCtx, p, bC, bR, ct, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr), (w, c, r, v, col) => this.spawnScorePopup(w, c, r, v, col));
+  }
+  private handleEdgePushPlayer2(world: IWorld, p2: Player2State, bC: number, bR: number, ct: number, _dc: number, _dr: number) {
+    _handleEdgePush(world, this.blockCtx, this.player!, bC, bR, ct, (w, _pl, tc, tr) => this.movePlayer2To(w, p2, tc, tr), (w, c, r, v, col) => this.spawnScorePopup(w, c, r, v, col));
+  }
+  private collectItem(world: IWorld, p: PlayerState, c: number, r: number) {
+    _collectItem(world, this.blockCtx, p, c, r, (w, c2, r2, v, col) => this.spawnScorePopup(w, c2, r2, v, col), (w, c2, r2, t, col) => this.spawnPowerupText(w, c2, r2, t, col));
+  }
+  private collectItemAsPlayer2(world: IWorld, p2: Player2State, c: number, r: number) {
+    if (!this.player) return;
+    const key = gridKey(c, r);
+    const itemEntity = this.entityMap.get(key);
+    if (itemEntity !== undefined) {
+      const sprite = world.getComponent<SpriteComponent>(itemEntity, SPRITE_COMPONENT);
+      if (sprite && sprite.textureId === ASSETS.PUSH_POWERUP) {
+        p2.pushDistance = Math.min(p2.pushDistance + 1, PLAYER_MAX_PUSH_DISTANCE);
+        p2.canBreakWalls = true;
+        this.spawnPowerupText(world, c, r, '推力+1 / 可碎墙!', 0xff8800);
+        gameAudio.playCoin();
+        clearItemAt(world, this.blockCtx, c, r);
+        return;
+      }
+      gameAudio.playCoin();
+    }
+    clearItemAt(world, this.blockCtx, c, r);
+  }
+  private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number) {
+    _killEnemyScore(world, p, this.combo, ec, er, (eid) => this.trackEntity(eid));
+  }
+
+  // ------------------------------------------------------------------
+  // Move player entity to new grid cell
+  // ------------------------------------------------------------------
+  private movePlayerTo(world: IWorld, p: PlayerState, tc: number, tr: number): void {
+    this.grid[p.row][p.col] = this.safeZones.has(gridKey(p.col, p.row)) ? CELL_SAFE : CELL_EMPTY;
+    this.grid[tr][tc] = CELL_PLAYER;
+
+    p.col = tc;
+    p.row = tr;
+    p.cooldown = PLAYER_MOVE_COOLDOWN;
+    p.moving = true;
+    gameAudio.playWalk();
+
+    const target = gridToWorld(tc, tr);
+    const transform = world.getComponent<TransformComponent>(p.entity, TRANSFORM_COMPONENT);
+    if (transform) {
+      transform.x = target.x;
+      transform.y = target.y;
+      const originalScaleX = transform.scaleX;
+      const originalScaleY = transform.scaleY;
+      globalTweens.to(transform, { scaleX: 1.05, scaleY: 1.05 }, {
+        duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
+        easing: Easing.easeOutQuad,
+        onComplete: () => {
+          globalTweens.to(transform, { scaleX: originalScaleX, scaleY: originalScaleY }, {
+            duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
+            easing: Easing.easeInQuad,
+            onComplete: () => { p.moving = false; }
           });
         }
       });
@@ -752,13 +1013,9 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   private crushEnemy(world: IWorld, p: PlayerState, enemy: EnemyState): void {
     this.killEnemyScore(world, p, enemy.col, enemy.row);
-
-    // 立即标记为 dying，停止碰撞检测和 AI
     enemy.dying = true;
-    // 从 enemies 数组移除（不再参与任何逻辑），但实体还在
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) this.enemies.splice(idx, 1);
-    // 清除网格占位
     if (this.grid[enemy.row][enemy.col] !== CELL_HEART_BLOCK &&
         this.grid[enemy.row][enemy.col] !== CELL_BLOCK &&
         this.grid[enemy.row][enemy.col] !== CELL_STAR_BLOCK &&
@@ -766,22 +1023,18 @@ export class GameScene extends Scene {
       this.grid[enemy.row][enemy.col] = CELL_EMPTY;
     }
 
-    // 压扁动画：卡通夸张效果
     const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
     const sprite = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
 
     if (transform) {
-      // 阶段1：瞬间压扁（宽变大，高变小）
       globalTweens.to(transform, { scaleX: 2.2, scaleY: 0.15 }, {
         duration: 0.08,
         easing: Easing.easeOutQuad,
         onComplete: () => {
-          // 阶段2：轻微弹回（还是扁的，但稍微回弹）
           globalTweens.to(transform, { scaleX: 1.8, scaleY: 0.25 }, {
             duration: 0.1,
             easing: Easing.easeOutQuad,
             onComplete: () => {
-              // 阶段3：淡出消失
               if (sprite) {
                 globalTweens.to(sprite, { alpha: 0 }, {
                   duration: 0.35,
@@ -809,9 +1062,6 @@ export class GameScene extends Scene {
     world.destroyEntity(enemy.entity);
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) this.enemies.splice(idx, 1);
-
-    // 清除网格中的敌人位置，设置为空单元格
-    // 但需要检查该位置是否已经被其他东西占据（比如正在压过来的方块）
     if (this.grid[enemy.row][enemy.col] !== CELL_HEART_BLOCK &&
       this.grid[enemy.row][enemy.col] !== CELL_BLOCK &&
       this.grid[enemy.row][enemy.col] !== CELL_STAR_BLOCK &&
@@ -822,12 +1072,7 @@ export class GameScene extends Scene {
 
   private maybeDropItem(world: IWorld, c: number, r: number, enemyType?: number): void {
     if (this.grid[r][c] !== CELL_EMPTY) return;
-
-    // 只有青蛙怪物（ENEMY_TYPE_FROG）固定掉落黄钻
-    if (enemyType !== undefined && enemyType !== ENEMY_TYPE_FROG) {
-      return;
-    }
-
+    if (enemyType !== undefined && enemyType !== ENEMY_TYPE_FROG) return;
     this.spawnItemAt(world, c, r, ASSETS.ITEM_YELLOW);
   }
 
@@ -848,7 +1093,6 @@ export class GameScene extends Scene {
         color,
         align: 'center',
         zIndex: Z_SCORE_POPUP
-        // fontStyle: 'bold' // 暂时注释掉，可能不被支持
       })
       .build();
     this.trackEntity(eid);
@@ -870,13 +1114,11 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // Enemy AI
   // ------------------------------------------------------------------
+  private updateEnemies(world: IWorld, dt: number) { _updateEnemies(world, this.enemyAICtx, dt); }
+
   // ------------------------------------------------------------------
   // NPC Squirrel AI
   // ------------------------------------------------------------------
-  // ---- EnemyAI delegates ----
-  private updateEnemies(world: IWorld, dt: number) { _updateEnemies(world, this.enemyAICtx, dt); }
-
-  // ---- NpcController delegates ----
   private updateNpc(world: IWorld, dt: number) { if (this.npc) _updateNpc(world, this.npcCtx, this.npc, dt); }
   private tryPushNpc(world: IWorld, p: PlayerState, npcC: number, npcR: number, dc: number, dr: number) { if (this.npc) _tryPushNpc(world, this.npcCtx, p, this.npc, npcC, npcR, dc, dr); }
   private damageNpc(world: IWorld, npc: NpcState) { _damageNpc(world, npc); }
@@ -903,16 +1145,16 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Heart victory - delegates to WinCondition module
+  // Heart victory
   // ------------------------------------------------------------------
   private checkHeartsConnected(): boolean { return checkHeartsConnected(this.grid); }
 
   // ------------------------------------------------------------------
-  // Damage player - delegates to CombatSystem
+  // Damage player
   // ------------------------------------------------------------------
   private damagePlayer(world: IWorld): void {
     if (!this.player) return;
-    setRunHp(this.player.hp - 1); // pre-update for sync
+    setRunHp(this.player.hp - 1);
     _damagePlayer(world, this.player, () => this.gameOver(world, 'hp'));
     setRunHp(this.player.hp);
   }
@@ -933,14 +1175,11 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   private gameOver(world: IWorld, reason: 'hp' | 'time'): void {
     if (this.phase !== 'playing') return;
-
     this.phase = 'complete';
     this.victoryType = 'none';
     this.completeTimer = 0;
-
     const text = reason === 'hp' ? 'GAME OVER' : '时间到!';
     this.showGameOverText(world, text);
-
     setTimeout(() => {
       if (!this.isActive) return;
       const score = this.getResolvedScore();
@@ -964,14 +1203,11 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Check completion (hearts only)
+  // Check completion
   // ------------------------------------------------------------------
   private checkComplete(world: IWorld): void {
     if (this.phase !== 'playing') return;
-
-    const levelClearBonus = this.currentLevelIndex + 1; // 每关+1分，街机风格
-
-    // 唯一胜利条件：3个心心方块连在一起
+    const levelClearBonus = this.currentLevelIndex + 1;
     if (this.checkHeartsConnected()) {
       this.phase = 'complete';
       this.victoryType = 'hearts';
@@ -987,10 +1223,7 @@ export class GameScene extends Scene {
   }
 
   private showVictoryText(world: IWorld, text: string): void {
-    // 保存当前胜利UI实体ID，以便后续清除
     this.victoryUIEntities = [];
-
-    // 显示关卡通关文本
     const levelName = LEVELS.length > 0 && this.currentLevelIndex < LEVELS.length
       ? LEVELS[this.currentLevelIndex].name
       : `ROUND-${this.currentLevelIndex + 1}`;
@@ -1009,7 +1242,6 @@ export class GameScene extends Scene {
     this.trackEntity(textEid);
     this.victoryUIEntities.push(textEid);
 
-    // 显示说明文本
     const descEid = UIEntityBuilder.create(world, W, H)
       .withUITransform({ anchor: 'center', y: -30, width: 400, height: 40 })
       .withText({
@@ -1023,11 +1255,9 @@ export class GameScene extends Scene {
     this.trackEntity(descEid);
     this.victoryUIEntities.push(descEid);
 
-    // 只在还有下一关时显示"下一关"按钮
     const hasNextLevel = LEVELS.length > 0 && this.currentLevelIndex < LEVELS.length - 1;
 
     if (hasNextLevel) {
-      // 下一关按钮
       const nextLevelBtn = UIEntityBuilder.create(world, W, H)
         .withUITransform({ anchor: 'center', y: 60, width: 200, height: 50 })
         .withButton({
@@ -1036,40 +1266,22 @@ export class GameScene extends Scene {
           borderRadius: 8
         })
         .build();
-
       this.trackEntity(nextLevelBtn);
       this.victoryUIEntities.push(nextLevelBtn);
     }
 
-    // 回到主菜单按钮
     const menuBtn = UIEntityBuilder.create(world, W, H)
-      .withUITransform({
-        anchor: 'center',
-        y: hasNextLevel ? 130 : 60,
-        width: 200,
-        height: 50
-      })
-      .withButton({
-        label: '回到主菜单',
-        onClick: 'scene:menu',
-        borderRadius: 8
-      })
+      .withUITransform({ anchor: 'center', y: hasNextLevel ? 130 : 60, width: 200, height: 50 })
+      .withButton({ label: '回到主菜单', onClick: 'scene:menu', borderRadius: 8 })
       .build();
-
     this.trackEntity(menuBtn);
     this.victoryUIEntities.push(menuBtn);
   }
 
   private goToNextLevel(world: IWorld): void {
-    if (this.currentLevelIndex >= LEVELS.length - 1) {
-      return;
-    }
-    // 防止按钮被多次点击重复触发
-    if (this.phase !== 'complete') {
-      return;
-    }
-    this.phase = 'ready'; // 立即锁定，防止重入
-
+    if (this.currentLevelIndex >= LEVELS.length - 1) return;
+    if (this.phase !== 'complete') return;
+    this.phase = 'ready';
     this.cleanupAllEntities(world);
     setRunScore(this.getResolvedScore());
     setRunHp(this.player?.hp ?? getRunHp());
@@ -1090,28 +1302,21 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Cleanup all entities (including UI)
+  // Cleanup all entities
   // ------------------------------------------------------------------
   private cleanupAllEntities(world: IWorld): void {
-    // 清除胜利UI实体
     this.cleanupVictoryUI(world);
-
-    // Use the base Scene tracking list so each entity is destroyed once.
     this.destroyTrackedEntities(world);
-
     if (this.nonGridEntities) {
       this.nonGridEntities.clear();
     }
-
-    // 清除场景状态
     this.entityMap.clear();
     this.bombs = [];
     this.enemies = [];
     this.player = null;
+    this.player2 = null;
     this.safeZones.clear();
     this.grid = [];
-
-    // 重置 HUD 实体引用
     this.hudEntities = { hpEntity: 0 as EntityId, scoreDisplayEntity: 0 as EntityId, timeDisplayEntity: 0 as EntityId, levelDisplayEntity: 0 as EntityId, heartStatusEntity: 0 as EntityId, enemyCountEntity: 0 as EntityId, scoreEntity: 0 as EntityId, collectEntity: 0 as EntityId, readyEntity: 0 as EntityId };
     this.readyEntity = 0;
   }
@@ -1121,11 +1326,6 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   protected override trackEntity(eid: EntityId): void {
     super.trackEntity(eid);
-
-    // 这个方法用于跟踪实体，以便在清理时销毁
-    // 注意：地板实体等不需要网格位置跟踪的实体只通过这个方法跟踪
-    // 网格实体（方块、敌人等）还会被添加到entityMap中
-    // 我们需要一个额外的集合来跟踪非网格实体
     if (!this.nonGridEntities) {
       this.nonGridEntities = new Set<EntityId>();
     }
@@ -1146,25 +1346,17 @@ export class GameScene extends Scene {
   // onExit
   // ------------------------------------------------------------------
   onExit(world: IWorld): void {
-    // 移除所有事件监听器
     for (const h of this.touchHandlers) {
       globalEventBus.off(h.evt, h.fn);
     }
     this.touchHandlers = [];
-
-    // 停止所有可能正在运行的tween动画
-    // 注意：globalTweens可能没有直接的停止所有方法
-    // 但清除状态应该足够
-
-    // 清除所有游戏状态
     this.grid = [];
     this.entityMap.clear();
     this.safeZones.clear();
     this.player = null;
+    this.player2 = null;
     this.enemies = [];
     this.bombs = [];
-
-    // 重置其他状态
     this.phase = 'ready';
     this.readyTimer = READY_DURATION;
     this.completeTimer = 0;
@@ -1172,7 +1364,9 @@ export class GameScene extends Scene {
     this.timeLeft = TIME_LIMIT_SECONDS;
     this.completionHandled = false;
     this.touchDir = null;
-    // 调用父类的onExit
+    if (this.isMultiplayer) {
+      multiplayerState.cleanup();
+    }
     super.onExit(world);
   }
 
@@ -1181,14 +1375,9 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   public modifyPushDistance(distance: number): void {
     if (this.player) {
-      // 限制推动距离在合理范围内
       const newDistance = Math.max(1, Math.min(distance, PLAYER_MAX_PUSH_DISTANCE));
       this.player.pushDistance = newDistance;
-
-      // 可以添加视觉反馈
       console.log(`Push distance changed to ${newDistance}`);
-
-      // 这里可以添加视觉特效，比如显示提示文字等
     }
   }
 
