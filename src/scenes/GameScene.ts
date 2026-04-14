@@ -40,20 +40,10 @@ import {
   PLAYER_MAX_HP,
   PLAYER_PUSH_DISTANCE,
   PLAYER_MAX_PUSH_DISTANCE,
-  ENEMY_MOVE_INTERVAL_MIN,
-  ENEMY_MOVE_INTERVAL_MAX,
   ENEMY_TYPE_FROG,
-  ENEMY_TYPE_BLOB,
-  ENEMY_TYPE_BOW,
-  ENEMY_TYPE_GEAR,
   ENEMY_TEXTURES,
-  BOMB_EXPLOSION_RANGE,
-  SCORE_YELLOW_ITEM,
-  SCORE_BLUE_ITEM,
-  SCORE_BLOCK_BREAK,
-  SCORE_WALL_BREAK,
-  SCORE_STAR_BREAK,
   SCORE_HEART_MERGE,
+  SCORE_WALL_BREAK,
   calcTimeBonusScore,
   READY_DURATION,
   ENEMY_SPAWN_ACTIVATE_DELAY,
@@ -61,7 +51,6 @@ import {
   getLevelTimeLimit,
   Z_WALL,
   Z_BLOCK,
-  Z_ITEM,
   Z_ENEMY,
   Z_PLAYER,
   Z_UI_POPUP,
@@ -74,17 +63,15 @@ import {
   gridToWorld,
   gridKey,
   inBounds,
-  ALL_DIRECTIONS,
   isNpcSquirrelEnabled,
   NPC_HP,
   NPC_MOVE_COOLDOWN_MIN,
-  NPC_MOVE_COOLDOWN_MAX,
 } from '../config';
 import { getRunHp, getRunScore, setRunHp, setRunScore } from '../gameProgress';
 import { gameAudio } from '../audio';
 import type { PlayerState, EnemyState, NpcState, BombState, GamePhase, VictoryType } from '../entity/types';
 import { parseLevel, createFloor } from '../game/GridSystem';
-import { resolveEnemySpawnCells } from '../game/EnemySpawner';
+import { resolveEnemySpawnCells, getEnemyMoveCooldown } from '../game/EnemySpawner';
 import { checkHeartsConnected } from '../game/WinCondition';
 import {
   killEnemyScore as _killEnemyScore, spawnScorePopup as _spawnScorePopup,
@@ -96,6 +83,16 @@ import {
   updateHUD as _updateHUD,
   type HudEntities,
 } from '../game/HudSystem';
+import {
+  isPushable, calculatePushPath,
+  destroyBlockAt, destroyWallAt, spawnBreakEffect, spawnItemAt, clearItemAt,
+  pushBlock as _pushBlock, explodeSingleBomb as _explodeSingleBomb,
+  pushBombUntilCollision as _pushBombUntilCollision,
+  handleEdgePush as _handleEdgePush, collectItem as _collectItem,
+  type BlockContext,
+} from '../game/BlockSystem';
+import { updateEnemies as _updateEnemies, type EnemyAIContext } from '../game/EnemyAI';
+import { updateNpc as _updateNpc, tryPushNpc as _tryPushNpc, type NpcContext } from '../game/NpcController';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
@@ -103,27 +100,6 @@ const H = GAME_HEIGHT;
 // ---- State interfaces ----
 
 // ---- Helpers ----
-function randomEnemyCooldown(): number {
-  return ENEMY_MOVE_INTERVAL_MIN + Math.random() * (ENEMY_MOVE_INTERVAL_MAX - ENEMY_MOVE_INTERVAL_MIN);
-}
-
-function getEnemyMoveCooldown(enemyType: number): number {
-  const base = randomEnemyCooldown();
-
-  switch (enemyType) {
-    case ENEMY_TYPE_FROG:
-      return base * 1.6;   // 慢，随机游荡
-    case ENEMY_TYPE_BLOB:
-      return base * 1.0;   // 最快，追玩家，约 0.18~0.35s（玩家 0.13s）
-    case ENEMY_TYPE_BOW:
-      return base * 1.2;   // 中速，会跳过方块
-    case ENEMY_TYPE_GEAR:
-      return base * 2.0;   // 最慢，但能推方块
-    default:
-      return base;
-  }
-}
-
 
 export class GameScene extends Scene {
   readonly name = 'GameScene';
@@ -189,9 +165,38 @@ export class GameScene extends Scene {
   // ---- Victory UI entities ----
   private victoryUIEntities: EntityId[] = [];
 
-  // ------------------------------------------------------------------
-  // onEnter
-  // ------------------------------------------------------------------
+  // ---- Context builders per i moduli ----
+  private get blockCtx(): BlockContext {
+    return {
+      grid: this.grid, entityMap: this.entityMap, itemDecorationMap: this.itemDecorationMap,
+      safeZones: this.safeZones, outerGrassZones: this.outerGrassZones,
+      bombs: this.bombs, enemies: this.enemies, player: this.player,
+      isActive: this.isActive, phase: this.phase,
+      trackEntity: (eid) => this.trackEntity(eid),
+      findEnemyAt: (c, r) => this.findEnemyAt(c, r),
+      destroyEnemy: (world, enemy) => this.destroyEnemy(world, enemy),
+      damagePlayer: (world) => this.damagePlayer(world),
+      combo: this.combo,
+    };
+  }
+    return {
+      grid: this.grid, entityMap: this.entityMap,
+      player: this.player, npc: this.npc, enemies: this.enemies,
+      findEnemyAt: (c, r) => this.findEnemyAt(c, r),
+      damagePlayer: (world) => this.damagePlayer(world),
+      damageNpc: (world, npc) => this.damageNpc(world, npc),
+    };
+  }
+
+  private get npcCtx(): NpcContext {
+    return {
+      grid: this.grid, enemies: this.enemies,
+      findEnemyAt: (c, r) => this.findEnemyAt(c, r),
+      pushBlock: (world, fC, fR, tC, tR, ct) => this.pushBlock(world, fC, fR, tC, tR, ct),
+      crushEnemy: (world, p, enemy) => this.crushEnemy(world, p, enemy),
+      movePlayerTo: (world, p, tc, tr) => this.movePlayerTo(world, p, tc, tr),
+    };
+  }
   onEnter(world: IWorld, _data?: SceneTransitionData): void {
     globalTheme.setTheme('retro');
     this.currentLevelIndex = getCurrentLevelIndex();
@@ -676,400 +681,24 @@ export class GameScene extends Scene {
     // ---- WALL or other: can't move ----
   }
 
-  /** Check if a cell type is a pushable block. */
-  private isPushable(cell: number): boolean {
-    return cell === CELL_BLOCK || cell === CELL_STAR_BLOCK
-      || cell === CELL_HEART_BLOCK || cell === CELL_BOMB;
+  // ---- BlockSystem delegates (usati internamente da tryMovePlayer e altri) ----
+  private isPushable(cell: number): boolean { return isPushable(cell); }
+  private calculatePushPath(sC: number, sR: number, dc: number, dr: number, max: number) { return calculatePushPath(this.blockCtx, sC, sR, dc, dr, max); }
+  private destroyWallAt(world: IWorld, c: number, r: number) { destroyWallAt(world, this.blockCtx, c, r); }
+  private spawnBreakEffect(world: IWorld, c: number, r: number, color: number) { spawnBreakEffect(world, this.blockCtx, c, r, color); }
+  private spawnItemAt(world: IWorld, c: number, r: number, tex: string) { spawnItemAt(world, this.blockCtx, c, r, tex); }
+  private pushBlock(world: IWorld, fC: number, fR: number, tC: number, tR: number, ct: number) { return _pushBlock(world, this.blockCtx, fC, fR, tC, tR, ct); }
+  private pushBombUntilCollision(world: IWorld, p: PlayerState, bC: number, bR: number, dc: number, dr: number) {
+    _pushBombUntilCollision(world, this.blockCtx, p, bC, bR, dc, dr, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr));
   }
-
-  private calculateBombSlidePath(
-    startC: number, startR: number,
-    dc: number, dr: number,
-  ): { finalC: number; finalR: number; distance: number; hitEnemy: boolean } {
-    let finalC = startC;
-    let finalR = startR;
-    let distance = 0;
-
-    for (let i = 1; ; i++) {
-      const testC = startC + dc * i;
-      const testR = startR + dr * i;
-
-      if (!inBounds(testC, testR)) {
-        break;
-      }
-
-      // 遇到敌人：炸弹停在敌人位置并爆炸
-      if (this.findEnemyAt(testC, testR)) {
-        return { finalC: testC, finalR: testR, distance: i, hitEnemy: true };
-      }
-
-      const cell = this.grid[testR][testC];
-      const canOccupySafe = cell === CELL_SAFE && !this.outerGrassZones.has(gridKey(testC, testR));
-      if (cell === CELL_EMPTY || cell === CELL_ITEM || canOccupySafe) {
-        finalC = testC;
-        finalR = testR;
-        distance = i;
-        continue;
-      }
-
-      break;
-    }
-
-    return { finalC, finalR, distance, hitEnemy: false };
+  private handleEdgePush(world: IWorld, p: PlayerState, bC: number, bR: number, ct: number, _dc: number, _dr: number) {
+    _handleEdgePush(world, this.blockCtx, p, bC, bR, ct, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr), (w, c, r, v, col) => this.spawnScorePopup(w, c, r, v, col));
   }
-
-  /** Calculate the final position a block can be pushed to. */
-  private calculatePushPath(
-    startC: number, startR: number,
-    dc: number, dr: number,
-    maxDistance: number
-  ): { finalC: number; finalR: number; distance: number } {
-    let finalC = startC;
-    let finalR = startR;
-    let distance = 0;
-
-    // 检查从起点开始，最多maxDistance格的路径
-    for (let i = 1; i <= maxDistance; i++) {
-      const testC = startC + dc * i;
-      const testR = startR + dr * i;
-
-      if (!inBounds(testC, testR)) {
-        // 超出边界，停在上一格
-        break;
-      }
-
-      const cell = this.grid[testR][testC];
-      const canOccupySafe = cell === CELL_SAFE && !this.outerGrassZones.has(gridKey(testC, testR));
-      if (cell === CELL_EMPTY || cell === CELL_ITEM || canOccupySafe) {
-        // 可以占据这个位置
-        finalC = testC;
-        finalR = testR;
-        distance = i;
-      } else if (cell === CELL_WALL || this.isPushable(cell)) {
-        // 遇到墙或其他方块，停在上一格
-        break;
-      } else if (this.findEnemyAt(testC, testR)) {
-        // 遇到敌人，可以压死敌人并占据这个位置
-        finalC = testC;
-        finalR = testR;
-        distance = i;
-        // 压死敌人后可以继续前进，检查下一个位置
-        continue;
-      } else {
-        // 其他情况，停止
-        break;
-      }
-    }
-
-    return { finalC, finalR, distance };
+  private collectItem(world: IWorld, p: PlayerState, c: number, r: number) {
+    _collectItem(world, this.blockCtx, p, c, r, (w, c2, r2, v, col) => this.spawnScorePopup(w, c2, r2, v, col), (w, c2, r2, t, col) => this.spawnPowerupText(w, c2, r2, t, col));
   }
-
-  // ------------------------------------------------------------------
-  // Edge-push mechanic: block can't move further
-  // ------------------------------------------------------------------
-  private handleEdgePush(
-    world: IWorld, p: PlayerState,
-    blockC: number, blockR: number, cellType: number,
-    _dc: number, _dr: number,
-  ): void {
-    const key = gridKey(blockC, blockR);
-    const blockEntity = this.entityMap.get(key);
-
-    if (cellType === CELL_BLOCK) {
-      // Brick block shatters
-      gameAudio.playPush();
-      p.score += SCORE_BLOCK_BREAK;
-      this.spawnScorePopup(world, blockC, blockR, SCORE_BLOCK_BREAK, PALETTE.BREAK_WHITE);
-      this.destroyBlockAt(world, blockC, blockR);
-      this.spawnBreakEffect(world, blockC, blockR, 0x44bbaa);
-      // Player moves into the now-empty space
-      this.movePlayerTo(world, p, blockC, blockR);
-      return;
-    }
-
-    if (cellType === CELL_STAR_BLOCK) {
-      // Star block shatters and drops item
-      gameAudio.playPush();
-      p.score += SCORE_STAR_BREAK;
-      this.spawnScorePopup(world, blockC, blockR, SCORE_STAR_BREAK, PALETTE.SCORE_GOLD);
-      this.destroyBlockAt(world, blockC, blockR);
-      this.spawnBreakEffect(world, blockC, blockR, 0xffd700);
-      // Drop push power-up at that position
-      this.spawnItemAt(world, blockC, blockR, ASSETS.PUSH_POWERUP);
-      // Player does NOT move in (item is there now), but we set cooldown
-      p.cooldown = PLAYER_MOVE_COOLDOWN;
-      return;
-    }
-
-    if (cellType === CELL_BOMB) {
-      // Bomb explodes immediately
-      gameAudio.playPush();
-      this.explodeSingleBomb(world, p, blockC, blockR);
-      // Player moves into the cleared cell if it's now empty
-      if (this.grid[blockR][blockC] === CELL_EMPTY) {
-        this.movePlayerTo(world, p, blockC, blockR);
-      } else {
-        p.cooldown = PLAYER_MOVE_COOLDOWN;
-      }
-      return;
-    }
-
-    if (cellType === CELL_HEART_BLOCK) {
-      // Heart blocks cannot be broken – just can't push further
-      gameAudio.playPush();
-      // Check if beyond the obstacle there's a valid spot (no movement, just feedback)
-      p.cooldown = PLAYER_MOVE_COOLDOWN;
-      // Visual bounce feedback on the heart block (只做视觉效果，不改变实际坐标)
-      if (blockEntity !== undefined) {
-        const transform = world.getComponent<TransformComponent>(blockEntity, TRANSFORM_COMPONENT);
-        if (transform) {
-          // 使用缩放动画来模拟反弹效果，不改变实际坐标
-          const scaleFactor = 1.1; // 轻微放大
-          globalTweens.to(transform, { scaleX: scaleFactor, scaleY: scaleFactor }, {
-            duration: 0.06,
-            easing: Easing.easeOutQuad,
-            yoyo: true,
-            repeat: 1,
-            onComplete: () => {
-              // 确保恢复原状
-              transform.scaleX = 1.0;
-              transform.scaleY = 1.0;
-            }
-          });
-        }
-      }
-      return;
-    }
-  }
-
-  private pushBombUntilCollision(
-    world: IWorld,
-    p: PlayerState,
-    bombC: number,
-    bombR: number,
-    dc: number,
-    dr: number,
-  ): void {
-    const { finalC, finalR, distance, hitEnemy } = this.calculateBombSlidePath(bombC, bombR, dc, dr);
-
-    if (distance === 0) {
-      // 无处可移动，原地爆炸
-      this.explodeSingleBomb(world, p, bombC, bombR);
-      p.cooldown = PLAYER_MOVE_COOLDOWN;
-      return;
-    }
-
-    if (hitEnemy) {
-      // 炸弹滑到敌人位置立即爆炸（不移动炸弹实体，直接在目标格爆炸）
-      this.movePlayerTo(world, p, bombC, bombR);
-      // 先把炸弹逻辑位置移过去再爆炸，确保 explodeSingleBomb 能找到它
-      const bombKey = gridKey(bombC, bombR);
-      const bombEid = this.entityMap.get(bombKey);
-      if (bombEid !== undefined) {
-        this.entityMap.delete(bombKey);
-        this.entityMap.set(gridKey(finalC, finalR), bombEid);
-        const bt = world.getComponent<TransformComponent>(bombEid, TRANSFORM_COMPONENT);
-        if (bt) { const bp = gridToWorld(finalC, finalR); bt.x = bp.x; bt.y = bp.y; }
-      }
-      const bomb = this.bombs.find(b => b.col === bombC && b.row === bombR);
-      if (bomb) { bomb.col = finalC; bomb.row = finalR; }
-      this.grid[bombR][bombC] = CELL_EMPTY;
-      this.grid[finalR][finalC] = CELL_BOMB;
-      this.explodeSingleBomb(world, p, finalC, finalR);
-      return;
-    }
-
-    // 正常滑行到终点，延迟爆炸
-    const duration = this.pushBlock(world, bombC, bombR, finalC, finalR, CELL_BOMB);
-    this.movePlayerTo(world, p, bombC, bombR);
-
-    setTimeout(() => {
-      if (!this.isActive || this.phase === 'complete') return;
-      this.explodeSingleBomb(world, p, finalC, finalR);
-    }, Math.max(0, Math.round(duration * 1000)));
-  }
-
-  // ------------------------------------------------------------------
-  // Destroy block at grid position
-  // ------------------------------------------------------------------
-  private destroyBlockAt(world: IWorld, c: number, r: number): void {
-    // 保护心心方块不被销毁
-    if (this.grid[r][c] === CELL_HEART_BLOCK) {
-      console.warn('Attempted to destroy a heart block at', c, r, '- prevented');
-      return;
-    }
-
-    const key = gridKey(c, r);
-    const ent = this.entityMap.get(key);
-    if (ent !== undefined) {
-      world.destroyEntity(ent);
-      this.entityMap.delete(key);
-    }
-    this.grid[r][c] = this.safeZones.has(key) ? CELL_SAFE : CELL_EMPTY;
-
-    // Also remove from bombs array if it was a bomb
-    const bIdx = this.bombs.findIndex(b => b.col === c && b.row === r);
-    if (bIdx >= 0) this.bombs.splice(bIdx, 1);
-  }
-
-  private destroyWallAt(world: IWorld, c: number, r: number): void {
-    const key = gridKey(c, r);
-    const ent = this.entityMap.get(key);
-    if (ent !== undefined) {
-      world.destroyEntity(ent);
-      this.entityMap.delete(key);
-    }
-    this.grid[r][c] = CELL_EMPTY;
-  }
-
-  // ------------------------------------------------------------------
-  // Break visual effect (particle burst simulation)
-  // ------------------------------------------------------------------
-  private spawnBreakEffect(world: IWorld, c: number, r: number, color: number): void {
-    const pos = gridToWorld(c, r);
-    const FRAGMENT_COUNT = 6;
-    for (let i = 0; i < FRAGMENT_COUNT; i++) {
-      const angle = (Math.PI * 2 * i) / FRAGMENT_COUNT;
-      const dist = TILE_SIZE * 0.8;
-      const tx = pos.x + Math.cos(angle) * dist;
-      const ty = pos.y + Math.sin(angle) * dist;
-      const fragSize = 8 + Math.random() * 6;
-
-      const eid = EntityBuilder.create(world, W, H)
-        .withTransform({ x: pos.x, y: pos.y })
-        .withSprite({ color, width: fragSize, height: fragSize, zIndex: Z_SCORE_POPUP })
-        .build();
-      this.trackEntity(eid);
-
-      const transform = world.getComponent<TransformComponent>(eid, TRANSFORM_COMPONENT);
-      const sprite = world.getComponent<SpriteComponent>(eid, SPRITE_COMPONENT);
-      if (transform) {
-        globalTweens.to(transform, { x: tx, y: ty }, {
-          duration: 0.4,
-          easing: Easing.easeOutQuad,
-          onComplete: () => { world.destroyEntity(eid); },
-        });
-      }
-      if (sprite) {
-        globalTweens.to(sprite, { alpha: 0 }, { duration: 0.4, easing: Easing.easeOutQuad });
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Spawn an item at grid position
-  // ------------------------------------------------------------------
-  private spawnItemAt(world: IWorld, c: number, r: number, tex: string): void {
-    const key = gridKey(c, r);
-    const canSpawnOnCell = this.grid[r][c] === CELL_EMPTY || this.safeZones.has(key);
-    if (!canSpawnOnCell) return;
-    const pos = gridToWorld(c, r);
-    const eid = EntityBuilder.create(world, W, H)
-      .withTransform({ x: pos.x, y: pos.y })
-      .withSprite({ textureId: tex, width: TILE_SIZE, height: TILE_SIZE, zIndex: Z_ITEM })
-      .build();
-    this.trackEntity(eid);
-    this.entityMap.set(key, eid);
-    this.grid[r][c] = CELL_ITEM;
-
-    // 如果是POWERUP道具，添加一个字母"P"的文本显示
-    if (tex === ASSETS.PUSH_POWERUP) {
-      const textEid = EntityBuilder.create(world, W, H)
-        .withTransform({ x: pos.x, y: pos.y })
-        .withText({
-          text: 'P',
-          fontSize: 24,
-          color: 0xffffff,
-          align: 'center',
-          zIndex: Z_ITEM + 1,
-        })
-        .build();
-      this.trackEntity(textEid);
-      this.itemDecorationMap.set(key, [textEid]);
-    }
-  }
-
-  private clearItemAt(world: IWorld, c: number, r: number): void {
-    const key = gridKey(c, r);
-    const itemEntity = this.entityMap.get(key);
-    if (itemEntity !== undefined) {
-      world.destroyEntity(itemEntity);
-      this.entityMap.delete(key);
-    }
-
-    const decorations = this.itemDecorationMap.get(key);
-    if (decorations) {
-      for (const eid of decorations) {
-        world.destroyEntity(eid);
-      }
-      this.itemDecorationMap.delete(key);
-    }
-
-    if (this.grid[r][c] === CELL_ITEM) {
-      this.grid[r][c] = this.safeZones.has(key) ? CELL_SAFE : CELL_EMPTY;
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Explode a single bomb at a given position
-  // ------------------------------------------------------------------
-  private explodeSingleBomb(world: IWorld, p: PlayerState, bc: number, br: number): void {
-    // Find and mark bomb as exploded
-    const bIdx = this.bombs.findIndex(b => b.col === bc && b.row === br && !b.exploded);
-    if (bIdx < 0) return;
-    this.bombs[bIdx].exploded = true;
-    gameAudio.playExplosion();
-
-    // Destroy bomb entity
-    this.destroyBlockAt(world, bc, br);
-
-    if (this.isPlayerInExplosionRange(bc, br)) {
-      this.damagePlayer(world);
-    }
-
-    // Explosion affects a 3x3 area centered on the bomb.
-    for (let dr = -BOMB_EXPLOSION_RANGE; dr <= BOMB_EXPLOSION_RANGE; dr++) {
-      for (let dc = -BOMB_EXPLOSION_RANGE; dc <= BOMB_EXPLOSION_RANGE; dc++) {
-        const ec = bc + dc;
-        const er = br + dr;
-        if (!inBounds(ec, er)) continue;
-        if (ec === bc && er === br) continue;
-
-        if (this.grid[er][ec] === CELL_WALL) {
-          this.destroyWallAt(world, ec, er);
-          this.spawnBreakEffect(world, ec, er, 0x222222);
-          continue;
-        }
-
-        // Destroy pushable blocks in range (except hearts)
-        const cell = this.grid[er][ec];
-        if (cell === CELL_BLOCK || cell === CELL_STAR_BLOCK) {
-          this.destroyBlockAt(world, ec, er);
-        }
-        // Chain-explode other bombs
-        if (cell === CELL_BOMB) {
-          this.explodeSingleBomb(world, p, ec, er);
-        }
-
-        // Kill enemies in range
-        const enemy = this.findEnemyAt(ec, er);
-        if (enemy) {
-          this.killEnemyScore(world, p, ec, er);
-          this.destroyEnemy(world, enemy);
-        }
-      }
-    }
-
-    // Explosion visual flash
-    this.spawnExplosionFlash(world, bc, br);
-  }
-
-  private isPlayerInExplosionRange(bc: number, br: number): boolean {
-    if (!this.player) return false;
-    return (
-      Math.abs(this.player.col - bc) <= BOMB_EXPLOSION_RANGE &&
-      Math.abs(this.player.row - br) <= BOMB_EXPLOSION_RANGE
-    );
+  private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number) {
+    _killEnemyScore(world, p, this.combo, ec, er, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
@@ -1116,130 +745,6 @@ export class GameScene extends Scene {
     } else {
       p.moving = false;
     }
-  }
-
-  // ------------------------------------------------------------------
-  // Push block normally (to an empty/enemy cell)
-  // ------------------------------------------------------------------
-  private pushBlock(
-    world: IWorld, fromC: number, fromR: number,
-    toC: number, toR: number, cellType: number,
-  ): number {
-    gameAudio.playPush();
-    const key = gridKey(fromC, fromR);
-    const blockEntity = this.entityMap.get(key);
-
-    if (this.grid[toR][toC] === CELL_ITEM) {
-      this.clearItemAt(world, toC, toR);
-    }
-
-    // 立即更新逻辑状态
-    this.grid[fromR][fromC] = this.safeZones.has(key) ? CELL_SAFE : CELL_EMPTY;
-    this.grid[toR][toC] = cellType;
-    this.entityMap.delete(key);
-    if (blockEntity !== undefined) {
-      this.entityMap.set(gridKey(toC, toR), blockEntity);
-    }
-
-    // Update bomb position tracking
-    for (const b of this.bombs) {
-      if (b.col === fromC && b.row === fromR) {
-        b.col = toC;
-        b.row = toR;
-        break;
-      }
-    }
-
-    // 动画表现：移动实体到新位置
-    if (blockEntity !== undefined) {
-      const target = gridToWorld(toC, toR);
-      const transform = world.getComponent<TransformComponent>(blockEntity, TRANSFORM_COMPONENT);
-      if (transform) {
-        // 根据推动距离调整动画持续时间，推动距离越远，动画越快
-        const distance = Math.max(Math.abs(toC - fromC), Math.abs(toR - fromR));
-        const duration = PLAYER_MOVE_TWEEN_DURATION * (0.5 + distance * 0.3); // 滑动效果
-
-        // 立即设置最终位置，然后做动画
-        transform.x = target.x;
-        transform.y = target.y;
-
-        // 使用缩放和位置偏移创建滑动效果，而不改变实际位置
-        const sprite = world.getComponent<SpriteComponent>(blockEntity, SPRITE_COMPONENT);
-        if (sprite) {
-          // 保存原始位置
-          const originalX = transform.x;
-          const originalY = transform.y;
-
-          // 设置动画起始位置（往回偏移一点）
-          const offsetX = (fromC - toC) * TILE_SIZE * 0.3;
-          const offsetY = (fromR - toR) * TILE_SIZE * 0.3;
-          transform.x = originalX + offsetX;
-          transform.y = originalY + offsetY;
-
-          // 动画到最终位置
-          globalTweens.to(transform, { x: originalX, y: originalY }, {
-            duration: duration,
-            easing: Easing.easeOutCubic, // 使用更平滑的缓动函数
-          });
-        }
-
-        return duration;
-      }
-    }
-
-    return PLAYER_MOVE_TWEEN_DURATION;
-  }
-
-  // ------------------------------------------------------------------
-  // Collect item
-  // ------------------------------------------------------------------
-  private collectItem(world: IWorld, p: PlayerState, c: number, r: number): void {
-    const key = gridKey(c, r);
-    const itemEntity = this.entityMap.get(key);
-    if (itemEntity !== undefined) {
-      const sprite = world.getComponent<SpriteComponent>(itemEntity, SPRITE_COMPONENT);
-      let scoreVal = SCORE_YELLOW_ITEM;
-
-      if (sprite) {
-        if (sprite.textureId === ASSETS.ITEM_BLUE) {
-          scoreVal = SCORE_BLUE_ITEM;
-        }
-        // 检查是否是POWERUP道具（胶囊，显示大写的P）
-        if (sprite.textureId === ASSETS.PUSH_POWERUP) {
-          // 增加推动距离
-          p.pushDistance = Math.min(p.pushDistance + 1, PLAYER_MAX_PUSH_DISTANCE);
-          p.canBreakWalls = true;
-          // 显示特殊提示
-          this.spawnPowerupText(world, c, r, '推力+1 / 可碎墙!', 0xff8800);
-          gameAudio.playCoin();
-          // 不增加分数和收集品计数
-          this.clearItemAt(world, c, r);
-          return;
-        }
-      }
-
-      p.score += scoreVal;
-      p.collectibles += 1;
-      gameAudio.playCoin();
-      this.spawnScorePopup(world, c, r, scoreVal, PALETTE.SCORE_GOLD);
-    }
-    this.clearItemAt(world, c, r);
-  }
-
-  // ------------------------------------------------------------------
-  // Find enemy at grid position
-  // ------------------------------------------------------------------
-  private findEnemyAt(c: number, r: number): EnemyState | null {
-    for (const e of this.enemies) {
-      if (e.col === c && e.row === r && e.active && !e.dying) return e;
-    }
-    return null;
-  }
-
-
-  /** 统一处理杀怪得分，含 combo 计算 */
-  private killEnemyScore(world: IWorld, p: PlayerState, ec: number, er: number): void {
-    _killEnemyScore(world, p, this.combo, ec, er, (eid) => this.trackEntity(eid));
   }
 
   // ------------------------------------------------------------------
@@ -1368,480 +873,26 @@ export class GameScene extends Scene {
   // ------------------------------------------------------------------
   // NPC Squirrel AI
   // ------------------------------------------------------------------
-  private updateNpc(world: IWorld, dt: number): void {
-    const npc = this.npc;
-    if (!npc) return;
+  // ---- EnemyAI delegates ----
+  private updateEnemies(world: IWorld, dt: number) { _updateEnemies(world, this.enemyAICtx, dt); }
 
-    // 受伤冷却
-    if (npc.damageCooldown > 0) {
-      npc.damageCooldown -= dt;
-      if (npc.damageCooldown <= 0) npc.isInvincible = false;
+  // ---- NpcController delegates ----
+  private updateNpc(world: IWorld, dt: number) { if (this.npc) _updateNpc(world, this.npcCtx, this.npc, dt); }
+  private tryPushNpc(world: IWorld, p: PlayerState, npcC: number, npcR: number, dc: number, dr: number) { if (this.npc) _tryPushNpc(world, this.npcCtx, p, this.npc, npcC, npcR, dc, dr); }
+  private damageNpc(world: IWorld, npc: NpcState) { _damageNpc(world, npc); }
+
+  private findEnemyAt(c: number, r: number): EnemyState | null {
+    for (const e of this.enemies) {
+      if (e.col === c && e.row === r && e.active && !e.dying) return e;
     }
-    // stun
-    if (npc.stunTimer > 0) { npc.stunTimer -= dt; return; }
-    if (npc.moving) return;
-    if (npc.cooldown > 0) { npc.cooldown -= dt; return; }
-
-    // 找最近的心心方块，尝试推向另一个心心
-    const hearts: Array<{ c: number; r: number }> = [];
-    for (let r = 0; r < GRID_ROWS; r++)
-      for (let c = 0; c < GRID_COLS; c++)
-        if (this.grid[r][c] === CELL_HEART_BLOCK) hearts.push({ c, r });
-
-    if (hearts.length === 0) return;
-
-    // 找离 NPC 最近的心心
-    hearts.sort((a, b) =>
-      (Math.abs(a.c - npc.col) + Math.abs(a.r - npc.row)) -
-      (Math.abs(b.c - npc.col) + Math.abs(b.r - npc.row))
-    );
-    const target = hearts[0];
-
-    // 计算朝目标心心移动的方向（clumsy：有30%概率随机走）
-    let dirs = [...ALL_DIRECTIONS];
-    if (Math.random() > 0.3) {
-      // 大部分时候朝目标方向走
-      const dc = target.c - npc.col;
-      const dr = target.r - npc.row;
-      dirs.sort((a, b) => {
-        const da = Math.abs((npc.col + a.dc) - target.c) + Math.abs((npc.row + a.dr) - target.r);
-        const db = Math.abs((npc.col + b.dc) - target.c) + Math.abs((npc.row + b.dr) - target.r);
-        return da - db;
-      });
-      // clumsy：偶尔在最优方向上加点随机偏移
-      if (Math.random() < 0.25 && dirs.length > 1) {
-        [dirs[0], dirs[1]] = [dirs[1], dirs[0]];
-      }
-      void dc; void dr;
-    } else {
-      dirs = dirs.sort(() => Math.random() - 0.5);
-    }
-
-    for (const dir of dirs) {
-      const nc = npc.col + dir.dc;
-      const nr = npc.row + dir.dr;
-      if (!inBounds(nc, nr)) continue;
-
-      const cell = this.grid[nr][nc];
-
-      // 空格直接走
-      if (cell === CELL_EMPTY || cell === CELL_SAFE) {
-        this.moveNpcTo(world, npc, nc, nr);
-        break;
-      }
-
-      // 心心方块：尝试推
-      if (cell === CELL_HEART_BLOCK) {
-        const bc = nc + dir.dc;
-        const br = nr + dir.dr;
-        if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
-          // 推心心
-          this.pushBlock(world, nc, nr, bc, br, CELL_HEART_BLOCK);
-          this.moveNpcTo(world, npc, nc, nr);
-          break;
-        }
-      }
-
-      // 普通方块：也尝试推（clumsy 会推错方向）
-      if (cell === CELL_BLOCK) {
-        const bc = nc + dir.dc;
-        const br = nr + dir.dr;
-        if (inBounds(bc, br) && this.grid[br][bc] === CELL_EMPTY) {
-          this.pushBlock(world, nc, nr, bc, br, CELL_BLOCK);
-          this.moveNpcTo(world, npc, nc, nr);
-          break;
-        }
-      }
-    }
-
-    // 随机冷却，clumsy 感
-    npc.cooldown = NPC_MOVE_COOLDOWN_MIN + Math.random() * (NPC_MOVE_COOLDOWN_MAX - NPC_MOVE_COOLDOWN_MIN);
-  }
-
-  /** 玩家推动 NPC（需要 powerup），NPC 滑行并压死路径上的怪物 */
-  private tryPushNpc(world: IWorld, p: PlayerState, npcC: number, npcR: number, dc: number, dr: number): void {
-    const npc = this.npc!;
-
-    // 计算 NPC 能滑到的最远空格（逻辑同方块推动，但 NPC 不会碎裂）
-    let finalC = npcC;
-    let finalR = npcR;
-    let distance = 0;
-    for (let i = 1; i <= PLAYER_MAX_PUSH_DISTANCE; i++) {
-      const cc = npcC + dc * i;
-      const cr = npcR + dr * i;
-      if (!inBounds(cc, cr)) break;
-      const cell = this.grid[cr][cc];
-      if (cell === CELL_EMPTY || cell === CELL_SAFE) {
-        finalC = cc; finalR = cr; distance = i;
-      } else if (this.findEnemyAt(cc, cr)) {
-        // 路径上有怪物：NPC 停在怪物前一格，压死怪物
-        finalC = cc; finalR = cr; distance = i;
-        break;
-      } else {
-        break;
-      }
-    }
-
-    if (distance === 0) {
-      p.cooldown = PLAYER_MOVE_COOLDOWN;
-      return;
-    }
-
-    // 压死路径上所有怪物
-    for (let i = 1; i <= distance; i++) {
-      const cc = npcC + dc * i;
-      const cr = npcR + dr * i;
-      const enemyInPath = this.findEnemyAt(cc, cr);
-      if (enemyInPath) {
-        this.crushEnemy(world, p, enemyInPath);
-        // NPC 停在怪物格
-        finalC = cc; finalR = cr;
-        break;
-      }
-    }
-
-    // 更新 NPC 逻辑位置
-    this.grid[npc.row][npc.col] = CELL_EMPTY;
-    npc.col = finalC;
-    npc.row = finalR;
-    this.grid[finalR][finalC] = CELL_PLAYER;
-
-    // NPC 滑行动画（比普通移动快，有被推飞的感觉）
-    const npcTransform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
-    if (npcTransform) {
-      const target = gridToWorld(finalC, finalR);
-      const dur = 0.12 + distance * 0.04;
-      // 起始轻微压扁（被推的冲击感）
-      globalTweens.to(npcTransform, { scaleX: 1.3, scaleY: 0.75 }, {
-        duration: 0.05, easing: Easing.easeOutQuad,
-        onComplete: () => {
-          globalTweens.to(npcTransform, { x: target.x, y: target.y, scaleX: 1.0, scaleY: 1.0 }, {
-            duration: dur, easing: Easing.easeOutCubic,
-          });
-        },
-      });
-    }
-
-    gameAudio.playPush();
-    // 玩家走进 NPC 原来的格子
-    this.movePlayerTo(world, p, npcC, npcR);
-  }
-
-  private moveNpcTo(world: IWorld, npc: NpcState, nc: number, nr: number): void {
-    this.grid[npc.row][npc.col] = CELL_EMPTY;
-    npc.col = nc;
-    npc.row = nr;
-    this.grid[nr][nc] = CELL_PLAYER;
-
-    const target = gridToWorld(nc, nr);
-    const transform = world.getComponent<TransformComponent>(npc.entity, TRANSFORM_COMPONENT);
-    if (transform) {
-      const duration = 0.18 + Math.random() * 0.1; // 稍微不稳定的动画时长
-      globalTweens.to(transform, { x: target.x, y: target.y }, {
-        duration,
-        easing: Easing.easeOutQuad,
-        onComplete: () => {
-          // 落地后检测敌人碰撞
-          for (const enemy of this.enemies) {
-            if (enemy.active && !enemy.dying && enemy.col === nc && enemy.row === nr) {
-              this.damageNpc(world, npc);
-              break;
-            }
-          }
-        },
-      });
-    }
-  }
-
-  private damageNpc(world: IWorld, npc: NpcState): void {
-    _damageNpc(world, npc);
+    return null;
   }
 
   private updateWaves(world: IWorld, dt: number): void {
     if (this.currentWave >= this.totalWaves) return;
     if (this.nextWaveTimer <= 0) return;
     this.nextWaveTimer -= dt;
-    if (this.nextWaveTimer <= 0) {
-      this.spawnNextWave(world);
-    }
-  }
-
-  private updateEnemies(world: IWorld, dt: number): void {
-    for (const enemy of this.enemies) {
-      if (enemy.dying) continue; // 死亡动画中，跳过所有逻辑
-
-      // 延迟激活
-      if (!enemy.active) {        if (enemy.activateTimer > 0) {
-          enemy.activateTimer -= dt;
-          if (enemy.activateTimer <= 0) {
-            enemy.active = true;
-            const sprite = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
-            if (sprite) sprite.textureId = ENEMY_TEXTURES[enemy.type] ?? ASSETS.ENEMY_FROG;
-          }
-        }
-        continue;
-      }
-
-      // stun 计时
-      if (enemy.stunTimer > 0) enemy.stunTimer -= dt;
-
-      enemy.moveCooldown -= dt;
-      if (enemy.moveCooldown > 0) continue;
-      enemy.moveCooldown = getEnemyMoveCooldown(enemy.type);
-
-      // stun 中随机游荡
-      if (enemy.stunTimer > 0) {
-        this.stepEnemyRandom(world, enemy);
-        continue;
-      }
-
-      if (enemy.type === ENEMY_TYPE_BOW) {
-        this.stepEnemyBow(world, enemy);
-      } else if (enemy.type === ENEMY_TYPE_GEAR) {
-        this.stepEnemyGear(world, enemy);
-      } else {
-        this.stepEnemyBasic(world, enemy);
-      }
-    }
-  }
-
-  /** 移动敌人到目标格，动画完成后再检测碰撞 */
-  private moveEnemyTo(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
-    this.grid[enemy.row][enemy.col] = CELL_EMPTY;
-    enemy.col = nc;
-    enemy.row = nr;
-
-    const target = gridToWorld(nc, nr);
-    const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
-    const duration = enemy.moveCooldown * 0.82;
-
-    if (transform) {
-      globalTweens.to(transform, { x: target.x, y: target.y }, {
-        duration,
-        easing: Easing.easeOutQuad,
-        onComplete: () => {
-          // 动画完成后才判断碰撞，此时玩家若已离开则不扣血
-          if (this.player && this.player.col === nc && this.player.row === nr) {
-            this.damagePlayer(world);
-            enemy.stunTimer = 1.2;
-            // 碰撞反弹：敌人轻微缩放表示撞击感
-            globalTweens.to(transform, { scaleX: 1.3, scaleY: 1.3 }, {
-              duration: 0.06, easing: Easing.easeOutQuad,
-              onComplete: () => {
-                globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, {
-                  duration: 0.1, easing: Easing.easeInQuad,
-                });
-              },
-            });
-          }
-          // NPC 碰撞
-          if (this.npc && !this.npc.isInvincible && this.npc.col === nc && this.npc.row === nr) {
-            this.damageNpc(world, this.npc);
-            enemy.stunTimer = 1.2;
-          }
-        },
-      });
-    }
-  }
-
-  /** BOW 跳跃动画：起跳缩小 → 空中放大 → 落地恢复，分三段 */
-  private moveEnemyBowJump(world: IWorld, enemy: EnemyState, nc: number, nr: number): void {
-    this.grid[enemy.row][enemy.col] = CELL_EMPTY;
-    enemy.col = nc;
-    enemy.row = nr;
-
-    const target = gridToWorld(nc, nr);
-    const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
-    const totalDuration = enemy.moveCooldown * 0.82;
-    const phase = totalDuration / 3;
-
-    if (!transform) return;
-
-    // 阶段1：起跳 — 缩小（蓄力感）
-    globalTweens.to(transform, { scaleX: 0.7, scaleY: 0.7 }, {
-      duration: phase * 0.4,
-      easing: Easing.easeInQuad,
-      onComplete: () => {
-        // 阶段2：空中 — 放大并移动到目标
-        globalTweens.to(transform, { x: target.x, y: target.y, scaleX: 1.4, scaleY: 1.4 }, {
-          duration: phase * 1.2,
-          easing: Easing.easeOutQuad,
-          onComplete: () => {
-            // 阶段3：落地 — 恢复正常大小，轻微压扁
-            globalTweens.to(transform, { scaleX: 1.1, scaleY: 0.8 }, {
-              duration: phase * 0.2,
-              easing: Easing.easeOutQuad,
-              onComplete: () => {
-                globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, {
-                  duration: phase * 0.2,
-                  easing: Easing.easeInQuad,
-                  onComplete: () => {
-                    // 落地后检测碰撞
-                    if (this.player && this.player.col === nc && this.player.row === nr) {
-                      this.damagePlayer(world);
-                      enemy.stunTimer = 1.2;
-                    }
-                  },
-                });
-              },
-            });
-          },
-        });
-      },
-    });
-  }
-
-  /** 纯随机移动（stun 状态 / FROG） */
-  private stepEnemyRandom(world: IWorld, enemy: EnemyState): void {
-    const dirs = [...ALL_DIRECTIONS].sort(() => Math.random() - 0.5);
-    for (const dir of dirs) {
-      const nc = enemy.col + dir.dc;
-      const nr = enemy.row + dir.dr;
-      if (!inBounds(nc, nr)) continue;
-      if (this.grid[nr][nc] !== CELL_EMPTY) continue;
-      if (this.findEnemyAt(nc, nr)) continue;
-      this.moveEnemyTo(world, enemy, nc, nr);
-      break;
-    }
-  }
-
-  /** FROG: 随机；BLOB: 追玩家，可走进玩家格触发碰撞 */
-  private stepEnemyBasic(world: IWorld, enemy: EnemyState): void {
-    if (enemy.type === ENEMY_TYPE_BLOB && this.player) {
-      const dirs = [...ALL_DIRECTIONS].sort((a, b) => {
-        const da = Math.abs(this.player!.col - (enemy.col + a.dc)) + Math.abs(this.player!.row - (enemy.row + a.dr));
-        const db = Math.abs(this.player!.col - (enemy.col + b.dc)) + Math.abs(this.player!.row - (enemy.row + b.dr));
-        return da - db;
-      });
-      for (const dir of dirs) {
-        const nc = enemy.col + dir.dc;
-        const nr = enemy.row + dir.dr;
-        if (!inBounds(nc, nr)) continue;
-        const isPlayerCell = this.player.col === nc && this.player.row === nr;
-        if (this.grid[nr][nc] !== CELL_EMPTY && !isPlayerCell) continue;
-        if (this.findEnemyAt(nc, nr)) continue;
-        this.moveEnemyTo(world, enemy, nc, nr);
-        return;
-      }
-    } else {
-      this.stepEnemyRandom(world, enemy);
-    }
-  }
-
-  /** BOW: 优先追玩家，若正前方是方块则跳过它落到方块后面的空格 */
-  private stepEnemyBow(world: IWorld, enemy: EnemyState): void {
-    if (!this.player) { this.stepEnemyBasic(world, enemy); return; }
-
-    // 按距离玩家由近到远排序方向
-    const dirs = [...ALL_DIRECTIONS].sort((a, b) => {
-      const da = Math.abs(this.player!.col - (enemy.col + a.dc)) + Math.abs(this.player!.row - (enemy.row + a.dr));
-      const db = Math.abs(this.player!.col - (enemy.col + b.dc)) + Math.abs(this.player!.row - (enemy.row + b.dr));
-      return da - db;
-    });
-
-    for (const dir of dirs) {
-      const nc = enemy.col + dir.dc;
-      const nr = enemy.row + dir.dr;
-      if (!inBounds(nc, nr)) continue;
-
-      const cell = this.grid[nr][nc];
-
-      // 正常空格直接走（或玩家格）
-      const isPlayerCell = this.player.col === nc && this.player.row === nr;
-      if ((cell === CELL_EMPTY || isPlayerCell) && !this.findEnemyAt(nc, nr)) {
-        this.moveEnemyTo(world, enemy, nc, nr);
-        return;
-      }
-
-      // 前方是可推方块 → 尝试跳到方块后面的空格
-      const isBlock = cell === CELL_BLOCK || cell === CELL_STAR_BLOCK ||
-                      cell === CELL_HEART_BLOCK || cell === CELL_BOMB;
-      if (isBlock) {
-        const jc = nc + dir.dc;
-        const jr = nr + dir.dr;
-        if (inBounds(jc, jr) && this.grid[jr][jc] === CELL_EMPTY && !this.findEnemyAt(jc, jr)) {
-          this.moveEnemyBowJump(world, enemy, jc, jr); // 跳跃动画
-          return;
-        }
-      }
-    }
-  }
-
-  /** GEAR: 追玩家，若正前方是方块则推动它（方块滑到下一个空格） */
-  private stepEnemyGear(world: IWorld, enemy: EnemyState): void {
-    if (!this.player) { this.stepEnemyBasic(world, enemy); return; }
-
-    const dc = this.player.col - enemy.col;
-    const dr = this.player.row - enemy.row;
-    // 主轴优先，再备用方向
-    const primaryDirs = (Math.abs(dc) >= Math.abs(dr)
-      ? [{ dc: Math.sign(dc), dr: 0 }, { dc: 0, dr: Math.sign(dr) }]
-      : [{ dc: 0, dr: Math.sign(dr) }, { dc: Math.sign(dc), dr: 0 }]
-    ).filter(d => d.dc !== 0 || d.dr !== 0);
-    const fallbackDirs = ALL_DIRECTIONS.filter(d => !primaryDirs.some(p => p.dc === d.dc && p.dr === d.dr));
-    const dirs = [...primaryDirs, ...fallbackDirs];
-
-    for (const dir of dirs) {
-      const nc = enemy.col + dir.dc;
-      const nr = enemy.row + dir.dr;
-      if (!inBounds(nc, nr)) continue;
-
-      const cell = this.grid[nr][nc];
-
-      // 空格或玩家格直接走
-      const isPlayerCell = this.player.col === nc && this.player.row === nr;
-      if ((cell === CELL_EMPTY || isPlayerCell) && !this.findEnemyAt(nc, nr)) {
-        this.moveEnemyTo(world, enemy, nc, nr);
-        return;
-      }
-
-      // 前方是可推方块 → 只推一格，且不能推普通 BLOCK
-      const isGearPushable = cell === CELL_STAR_BLOCK || cell === CELL_HEART_BLOCK;
-      if (isGearPushable) {
-        const bc = nc + dir.dc;
-        const br = nr + dir.dr;
-        // 目标格必须是空格且没有敌人
-        if (!inBounds(bc, br) || this.grid[br][bc] !== CELL_EMPTY || this.findEnemyAt(bc, br)) continue;
-
-        // 移动方块实体一格
-        const blockKey = gridKey(nc, nr);
-        const blockEid = this.entityMap.get(blockKey);
-        if (blockEid !== undefined) {
-          this.entityMap.delete(blockKey);
-          this.entityMap.set(gridKey(bc, br), blockEid);
-          const bt = world.getComponent<TransformComponent>(blockEid, TRANSFORM_COMPONENT);
-          if (bt) { const bp = gridToWorld(bc, br); bt.x = bp.x; bt.y = bp.y; }
-        }
-        this.grid[br][bc] = cell;
-        this.grid[nr][nc] = CELL_EMPTY;
-
-        gameAudio.playPush();
-        this.moveEnemyTo(world, enemy, nc, nr);
-        return;
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Explosion flash visual
-  // ------------------------------------------------------------------
-  private spawnExplosionFlash(world: IWorld, c: number, r: number): void {
-    const pos = gridToWorld(c, r);
-    const size = TILE_SIZE * (BOMB_EXPLOSION_RANGE * 2 + 1);
-    const eid = EntityBuilder.create(world, W, H)
-      .withTransform({ x: pos.x, y: pos.y })
-      .withSprite({ color: 0xff6600, width: size, height: size, zIndex: Z_SCORE_POPUP - 1 })
-      .build();
-    this.trackEntity(eid);
-
-    const sprite = world.getComponent<SpriteComponent>(eid, SPRITE_COMPONENT);
-    if (sprite) {
-      globalTweens.to(sprite, { alpha: 0 }, {
-        duration: 0.5,
-        easing: Easing.easeOutQuad,
-        onComplete: () => { world.destroyEntity(eid); },
-      });
-    }
+    if (this.nextWaveTimer <= 0) this.spawnNextWave(world);
   }
 
   // ------------------------------------------------------------------

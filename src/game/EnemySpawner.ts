@@ -184,3 +184,24 @@ function getTargetBucketVariants(target: [number, number, number]): Array<[numbe
     return list.findIndex(o => o.every((x, j) => x === v[j])) === i;
   });
 }
+
+// ---- 敌人移动冷却计算（供 EnemyAI 使用）----
+import {
+  ENEMY_MOVE_INTERVAL_MIN, ENEMY_MOVE_INTERVAL_MAX,
+  ENEMY_TYPE_FROG, ENEMY_TYPE_BLOB, ENEMY_TYPE_BOW, ENEMY_TYPE_GEAR,
+} from '../config';
+
+function randomEnemyCooldown(): number {
+  return ENEMY_MOVE_INTERVAL_MIN + Math.random() * (ENEMY_MOVE_INTERVAL_MAX - ENEMY_MOVE_INTERVAL_MIN);
+}
+
+export function getEnemyMoveCooldown(enemyType: number): number {
+  const base = randomEnemyCooldown();
+  switch (enemyType) {
+    case ENEMY_TYPE_FROG: return base * 1.6;
+    case ENEMY_TYPE_BLOB: return base * 1.0;
+    case ENEMY_TYPE_BOW:  return base * 1.2;
+    case ENEMY_TYPE_GEAR: return base * 2.0;
+    default: return base;
+  }
+}

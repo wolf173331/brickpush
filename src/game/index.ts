@@ -3,3 +3,7 @@ export * from './EnemySpawner';
 export * from './WinCondition';
 export * from './CombatSystem';
 export * from './HudSystem';
+export * from './BlockSystem';
+export * from './EnemyAI';
+export * from './NpcController';
+export * from './GameContext';
