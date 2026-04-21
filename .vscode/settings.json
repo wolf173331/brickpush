@@ -1,3 +1,81 @@
 {
-    "kiroAgent.configureMCP": "Disabled"
+  // ===== 关闭 Copilot 相关功能 =====
+  "github.copilot.enable": {
+    "*": false
+  },
+  "github.copilot.editor.enableAutoCompletions": false,
+  "github.copilot.chat.showWalkthroughs": false,
+  "github.copilot.advanced": {
+    "suppressInlineSuggestions": true
+  },
+  
+  // ===== 编辑器布局优化 =====
+  "workbench.tree.indent": 16,
+  "explorer.compactFolders": false,
+  "workbench.editor.enablePreview": false,
+  "workbench.editor.showTabs": true,
+  "workbench.editor.wrapTabs": true,
+  
+  // ===== 侧边栏和面板 =====
+  "workbench.startupEditor": "none",
+  "workbench.panel.defaultLocation": "bottom",
+  "workbench.panel.opensMaximized": "never",
+  
+  // ===== H5 游戏开发推荐设置 =====
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "js/ts.implicitProjectConfig.checkJs": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  
+  // 文件关联
+  "files.associations": {
+    "*.atlas": "json",
+    "*.plist": "xml",
+    "*.fnt": "json"
+  },
+  
+  // 排除游戏资源文件（避免 VS Code 索引过多文件）
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/*.mp3": true,
+    "**/*.ogg": true,
+    "**/*.wav": true,
+    "**/*.png": true,
+    "**/*.jpg": true,
+    "**/*.jpeg": true,
+    "**/*.gif": true,
+    "**/*.ttf": true,
+    "**/*.fnt": true
+  },
+  
+  // 搜索排除
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/*.min.js": true
+  },
+  
+  // ===== 代码格式化 =====
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "prettier.singleQuote": true,
+  "prettier.semi": true,
+  "prettier.tabWidth": 2,
+  
+  // ===== 编辑器外观 =====
+  "editor.minimap.enabled": true,
+  "editor.minimap.renderCharacters": false,
+  "editor.lineNumbers": "on",
+  "editor.rulers": [80, 120],
+  "editor.wordWrap": "on",
+  "editor.renderWhitespace": "boundary",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": true,
+  
+  // ===== 自动保存 =====
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000
 }

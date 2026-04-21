@@ -171,7 +171,7 @@ export class GameScene extends Scene {
   private idleFrame = 0;
 
   // ---- Multiplayer / lockstep ----
-  private isMultiplayer = false;
+  protected isMultiplayer = false;
   private rng: RandomGenerator = Math.random;
   private lockstepAccumulator = 0;
 

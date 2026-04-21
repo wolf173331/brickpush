@@ -4,14 +4,21 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 function isConfigured(): boolean {
-  return (
-    typeof SUPABASE_URL === 'string' &&
-    SUPABASE_URL.startsWith('https://') &&
+  const hasUrl = typeof SUPABASE_URL === 'string' && 
+    SUPABASE_URL.length > 10 && 
     !SUPABASE_URL.includes('your-project-id') &&
-    typeof SUPABASE_ANON_KEY === 'string' &&
-    SUPABASE_ANON_KEY.length > 20 &&
-    !SUPABASE_ANON_KEY.includes('your-anon-key')
-  )
+    !SUPABASE_URL.includes('placeholder');
+  const hasKey = typeof SUPABASE_ANON_KEY === 'string' && 
+    SUPABASE_ANON_KEY.length > 20 && 
+    !SUPABASE_ANON_KEY.includes('your-anon-key') &&
+    !SUPABASE_ANON_KEY.includes('placeholder');
+  
+  if (hasUrl && hasKey) {
+    console.log('[Supabase] 配置已检测到');
+    return true;
+  }
+  console.warn('[Supabase] 配置缺失:', { hasUrl, hasKey, url: SUPABASE_URL?.slice(0, 20) });
+  return false;
 }
 
 export const supabase = isConfigured()
@@ -70,37 +77,77 @@ export function mergeEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
 // ---- Supabase ----
 
 async function fetchOnline(limit = MAX_ENTRIES): Promise<LeaderboardEntry[]> {
-  if (!supabase) return []
+  if (!supabase) {
+    console.warn('[Supabase] 客户端未配置');
+    return [];
+  }
+  
   try {
-    const { data, error } = await supabase
+    console.log('[Supabase] 正在获取排行榜数据...');
+    
+    // 添加超时处理
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('获取超时')), 8000)
+    );
+    
+    const fetchPromise = supabase
       .from('leaderboard')
       .select('player_name, score, level_name, created_at')
       .order('score', { ascending: false })
-      .limit(limit)
-    if (error) throw error
+      .limit(limit);
+    
+    const { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
+    
+    if (error) {
+      console.error('[Supabase] 查询错误:', error);
+      throw error;
+    }
+    
+    console.log(`[Supabase] 成功获取 ${data?.length ?? 0} 条记录`);
     return (data ?? []).map(row => ({
       name: row.player_name,
       score: row.score,
       levelName: row.level_name,
       timestamp: new Date(row.created_at).getTime(),
-    }))
+    }));
   } catch (err) {
-    console.warn('在线获取失败:', err)
-    return []
+    console.error('[Supabase] 在线获取失败:', err);
+    return [];
   }
 }
 
-async function pushToOnline(name: string, score: number, levelName: string): Promise<void> {
-  if (!supabase) return
+async function pushToOnline(name: string, score: number, levelName: string): Promise<boolean> {
+  if (!supabase) {
+    console.warn('[Supabase] 客户端未配置，无法上传');
+    return false;
+  }
+  
   try {
-    const { error } = await supabase.from('leaderboard').insert([{
+    console.log(`[Supabase] 正在上传分数: ${name} - ${score}`);
+    
+    // 添加超时处理
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('上传超时')), 8000)
+    );
+    
+    const insertPromise = supabase.from('leaderboard').insert([{
       player_name: name,
       score: Math.max(0, Math.floor(score)),
       level_name: levelName,
-    }])
-    if (error) throw error
+    }]);
+    
+    const { error } = await Promise.race([insertPromise, timeoutPromise]);
+    
+    if (error) {
+      console.error('[Supabase] 插入错误:', error);
+      throw error;
+    }
+    
+    console.log('[Supabase] 上传成功');
+    return true;
   } catch (err) {
-    console.warn('在线上传失败:', err)
+    console.error('[Supabase] 在线上传失败:', err);
+    return false;
   }
 }
 
@@ -147,17 +194,22 @@ export class LeaderboardService {
     // 立即写本地
     const local = localSave(safeName, score, levelName)
 
-    // 异步上传在线，不等待
+    // 异步上传在线，等待结果
     if (supabase) {
-      pushToOnline(safeName, score, levelName).then(() => {
-        // 上传成功后静默更新本地缓存
-        fetchOnline().then(online => {
+      try {
+        const success = await pushToOnline(safeName, score, levelName);
+        if (success) {
+          // 上传成功后获取最新在线数据
+          const online = await fetchOnline();
           if (online.length > 0) {
             const merged = mergeEntries([...localLoad(), ...online])
             localStorage.setItem(LS_KEY, JSON.stringify(merged))
+            return merged;
           }
-        })
-      })
+        }
+      } catch (err) {
+        console.error('[LeaderboardService] 保存到在线失败:', err);
+      }
     }
 
     return local
