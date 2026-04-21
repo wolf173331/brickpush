@@ -37,7 +37,6 @@ import {
   CELL_ITEM,
   CELL_SAFE,
   PLAYER_MOVE_COOLDOWN,
-  PLAYER_MOVE_TWEEN_DURATION,
   PLAYER_MAX_HP,
   PLAYER_PUSH_DISTANCE,
   PLAYER_MAX_PUSH_DISTANCE,
@@ -166,6 +165,10 @@ export class GameScene extends Scene {
 
   // ---- Victory UI entities ----
   private victoryUIEntities: EntityId[] = [];
+
+  // ---- Idle animation ----
+  private idleTimer = 0;
+  private idleFrame = 0;
 
   // ---- Multiplayer / lockstep ----
   private isMultiplayer = false;
@@ -563,6 +566,7 @@ export class GameScene extends Scene {
     this.updateNpc(world, dt);
     this.updateHUD(world);
     this.checkComplete(world);
+    this.updateIdleAnimations(world, dt);
   }
 
   private updateMultiplayer(world: IWorld, dt: number): void {
@@ -675,6 +679,7 @@ export class GameScene extends Scene {
 
     this.updateNpc(world, dt);
     this.checkComplete(world);
+    this.updateIdleAnimations(world, dt);
   }
 
   private showDisconnectText(world: IWorld): void {
@@ -895,6 +900,8 @@ export class GameScene extends Scene {
   }
 
   private movePlayer2To(world: IWorld, p2: Player2State, tc: number, tr: number): void {
+    const dc = tc - p2.col;
+    const dr = tr - p2.row;
     this.grid[p2.row][p2.col] = this.safeZones.has(gridKey(p2.col, p2.row)) ? CELL_SAFE : CELL_EMPTY;
     this.grid[tr][tc] = CELL_PLAYER;
 
@@ -909,19 +916,8 @@ export class GameScene extends Scene {
     if (transform) {
       transform.x = target.x;
       transform.y = target.y;
-      const originalScaleX = transform.scaleX;
-      const originalScaleY = transform.scaleY;
-      globalTweens.to(transform, { scaleX: 1.05, scaleY: 1.05 }, {
-        duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
-        easing: Easing.easeOutQuad,
-        onComplete: () => {
-          globalTweens.to(transform, { scaleX: originalScaleX, scaleY: originalScaleY }, {
-            duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
-            easing: Easing.easeInQuad,
-            onComplete: () => { p2.moving = false; }
-          });
-        }
-      });
+      this.animateMoveTransform(transform, target.x, target.y, dc, dr, PLAYER_MOVE_COOLDOWN);
+      setTimeout(() => { p2.moving = false; }, Math.round(PLAYER_MOVE_COOLDOWN * 1000));
     } else {
       p2.moving = false;
     }
@@ -976,6 +972,8 @@ export class GameScene extends Scene {
   // Move player entity to new grid cell
   // ------------------------------------------------------------------
   private movePlayerTo(world: IWorld, p: PlayerState, tc: number, tr: number): void {
+    const dc = tc - p.col;
+    const dr = tr - p.row;
     this.grid[p.row][p.col] = this.safeZones.has(gridKey(p.col, p.row)) ? CELL_SAFE : CELL_EMPTY;
     this.grid[tr][tc] = CELL_PLAYER;
 
@@ -990,21 +988,46 @@ export class GameScene extends Scene {
     if (transform) {
       transform.x = target.x;
       transform.y = target.y;
-      const originalScaleX = transform.scaleX;
-      const originalScaleY = transform.scaleY;
-      globalTweens.to(transform, { scaleX: 1.05, scaleY: 1.05 }, {
-        duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
-        easing: Easing.easeOutQuad,
-        onComplete: () => {
-          globalTweens.to(transform, { scaleX: originalScaleX, scaleY: originalScaleY }, {
-            duration: PLAYER_MOVE_TWEEN_DURATION * 0.15,
-            easing: Easing.easeInQuad,
-            onComplete: () => { p.moving = false; }
-          });
-        }
-      });
+      this.animateMoveTransform(transform, target.x, target.y, dc, dr, PLAYER_MOVE_COOLDOWN);
+      setTimeout(() => { p.moving = false; }, Math.round(PLAYER_MOVE_COOLDOWN * 1000));
     } else {
       p.moving = false;
+    }
+  }
+
+  private animateMoveTransform(
+    transform: TransformComponent,
+    _targetX: number,
+    targetY: number,
+    dc: number,
+    dr: number,
+    duration: number
+  ): void {
+    if (dc !== 0 && dr === 0) {
+      // 左右移动：弹跳 + 挤压拉伸 + 倾斜
+      globalTweens.to(transform, { y: targetY - 5 }, { duration: duration * 0.35, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { y: targetY }, { duration: duration * 0.65, easing: Easing.easeOutSine, delay: duration * 0.35 });
+
+      globalTweens.to(transform, { scaleX: 0.8, scaleY: 1.15 }, { duration: duration * 0.25, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { scaleX: 1.06, scaleY: 0.96 }, { duration: duration * 0.35, easing: Easing.easeInOutQuad, delay: duration * 0.25 });
+      globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, { duration: duration * 0.4, easing: Easing.easeOutQuad, delay: duration * 0.6 });
+
+      const rotDir = dc < 0 ? -0.14 : 0.14;
+      globalTweens.to(transform, { rotation: rotDir }, { duration: duration * 0.3, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { rotation: 0 }, { duration: duration * 0.7, easing: Easing.easeOutSine, delay: duration * 0.3 });
+    } else if (dr !== 0 && dc === 0) {
+      // 上下移动：zoom in/out + 扭动
+      globalTweens.to(transform, { scaleX: 1.14, scaleY: 1.14 }, { duration: duration * 0.25, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { scaleX: 0.94, scaleY: 0.94 }, { duration: duration * 0.3, easing: Easing.easeInQuad, delay: duration * 0.25 });
+      globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, { duration: duration * 0.45, easing: Easing.easeOutSine, delay: duration * 0.55 });
+
+      const wiggle = dr < 0 ? 0.1 : -0.1;
+      globalTweens.to(transform, { rotation: wiggle }, { duration: duration * 0.2, easing: Easing.easeOutQuad, yoyo: true, repeat: 1 });
+      globalTweens.to(transform, { rotation: 0 }, { duration: duration * 0.4, easing: Easing.easeOutQuad, delay: duration * 0.4 });
+    } else {
+      // 对角线：简单呼吸
+      globalTweens.to(transform, { scaleX: 1.08, scaleY: 1.08 }, { duration: duration * 0.3, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, { duration: duration * 0.7, easing: Easing.easeOutSine, delay: duration * 0.3 });
     }
   }
 
@@ -1135,6 +1158,56 @@ export class GameScene extends Scene {
     if (this.nextWaveTimer <= 0) return;
     this.nextWaveTimer -= dt;
     if (this.nextWaveTimer <= 0) this.spawnNextWave(world);
+  }
+
+  // ------------------------------------------------------------------
+  // Idle ear-wiggle animation (2-frame cycle)
+  // ------------------------------------------------------------------
+  private updateIdleAnimations(world: IWorld, dt: number): void {
+    const INTERVAL = 0.35; // seconds per frame
+    const p = this.player;
+    const p2 = this.player2;
+
+    let anyIdle = false;
+    if (p && !p.moving && p.cooldown <= 0) anyIdle = true;
+    if (p2 && !p2.moving && p2.cooldown <= 0) anyIdle = true;
+
+    if (!anyIdle) {
+      // Reset to normal immediately when moving
+      this.idleTimer = 0;
+      if (this.idleFrame !== 0) {
+        this.idleFrame = 0;
+        this.setPlayerTexture(world, p, ASSETS.PLAYER1);
+        this.setPlayer2Texture(world, p2, ASSETS.PLAYER2);
+      }
+      return;
+    }
+
+    this.idleTimer += dt;
+    if (this.idleTimer >= INTERVAL) {
+      this.idleTimer -= INTERVAL;
+      this.idleFrame = (this.idleFrame + 1) % 4; // 0→1→2→1→0 cycle
+      const frameMap = [0, 1, 0, 2]; // normal, left, normal, right
+      const frame = frameMap[this.idleFrame];
+
+      const p1Tex = frame === 1 ? ASSETS.PLAYER1_IDLE_L : frame === 2 ? ASSETS.PLAYER1_IDLE_R : ASSETS.PLAYER1;
+      const p2Tex = frame === 1 ? ASSETS.PLAYER2_IDLE_L : frame === 2 ? ASSETS.PLAYER2_IDLE_R : ASSETS.PLAYER2;
+
+      this.setPlayerTexture(world, p, p1Tex);
+      this.setPlayer2Texture(world, p2, p2Tex);
+    }
+  }
+
+  private setPlayerTexture(world: IWorld, p: PlayerState | null, tex: string): void {
+    if (!p) return;
+    const sprite = world.getComponent<SpriteComponent>(p.entity, SPRITE_COMPONENT);
+    if (sprite) sprite.textureId = tex;
+  }
+
+  private setPlayer2Texture(world: IWorld, p2: Player2State | null, tex: string): void {
+    if (!p2) return;
+    const sprite = world.getComponent<SpriteComponent>(p2.entity, SPRITE_COMPONENT);
+    if (sprite) sprite.textureId = tex;
   }
 
   // ------------------------------------------------------------------

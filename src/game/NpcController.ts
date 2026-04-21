@@ -129,6 +129,8 @@ export function tryPushNpc(
 }
 
 export function moveNpcTo(world: IWorld, ctx: NpcContext, npc: NpcState, nc: number, nr: number, rng: RandomGenerator = Math.random): void {
+  const dc = nc - npc.col;
+  const dr = nr - npc.row;
   ctx.grid[npc.row][npc.col] = CELL_EMPTY;
   npc.col = nc; npc.row = nr;
   ctx.grid[nr][nc] = CELL_PLAYER;
@@ -146,6 +148,20 @@ export function moveNpcTo(world: IWorld, ctx: NpcContext, npc: NpcState, nc: num
         }
       },
     });
+
+    // NPC 移动动画
+    globalTweens.to(transform, { scaleX: 0.88, scaleY: 1.12 }, { duration: duration * 0.3, easing: Easing.easeOutQuad });
+    globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, { duration: duration * 0.7, easing: Easing.easeOutSine, delay: duration * 0.3 });
+
+    if (dc !== 0 && dr === 0) {
+      const rotDir = dc < 0 ? -0.1 : 0.1;
+      globalTweens.to(transform, { rotation: rotDir }, { duration: duration * 0.3, easing: Easing.easeOutQuad });
+      globalTweens.to(transform, { rotation: 0 }, { duration: duration * 0.7, easing: Easing.easeOutSine, delay: duration * 0.3 });
+    } else if (dr !== 0 && dc === 0) {
+      const wiggle = dr < 0 ? 0.06 : -0.06;
+      globalTweens.to(transform, { rotation: wiggle }, { duration: duration * 0.2, easing: Easing.easeOutQuad, yoyo: true, repeat: 1 });
+      globalTweens.to(transform, { rotation: 0 }, { duration: duration * 0.4, easing: Easing.easeOutQuad, delay: duration * 0.4 });
+    }
   }
 }
 

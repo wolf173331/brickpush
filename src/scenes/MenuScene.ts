@@ -17,7 +17,7 @@ export class MenuScene extends Scene {
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)
       .withUITransform({ anchor: 'center', y: -180, width: 600, height: 80 })
-      .withText({ text: '把心串串', fontSize: 56, color: PALETTE.TITLE_YELLOW, align: 'center' })
+      .withText({ text: '把心串串(联机版!)', fontSize: 56, color: PALETTE.TITLE_YELLOW, align: 'center' })
       .build());
 
     this.trackEntity(UIEntityBuilder.create(world, W, H)

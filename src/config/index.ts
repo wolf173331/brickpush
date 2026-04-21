@@ -244,7 +244,11 @@ export const LEVEL_BOUND_02: readonly (readonly number[])[] = []; // Will be pop
 // ---- Asset IDs ----
 export const ASSETS = {
   PLAYER1: 'player1',
+  PLAYER1_IDLE_L: 'player1-idle-l',
+  PLAYER1_IDLE_R: 'player1-idle-r',
   PLAYER2: 'player2',
+  PLAYER2_IDLE_L: 'player2-idle-l',
+  PLAYER2_IDLE_R: 'player2-idle-r',
   WALL: 'wall',
   FLOOR: 'floor',
   GRASS: 'grass',
