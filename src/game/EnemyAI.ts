@@ -41,6 +41,11 @@ export function updateEnemies(world: IWorld, ctx: EnemyAIContext, dt: number): v
         enemy.activateTimer -= dt;
         if (enemy.activateTimer <= 0) {
           enemy.active = true;
+          const transform = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+          if (transform) {
+            globalTweens.killTweensOf(transform);
+            transform.rotation = 0;
+          }
           const sprite = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
           if (sprite) sprite.textureId = ENEMY_TEXTURES[enemy.type] ?? ASSETS.ENEMY_FROG;
         }
@@ -71,6 +76,7 @@ export function moveEnemyTo(world: IWorld, ctx: EnemyAIContext, enemy: EnemyStat
     globalTweens.to(transform, { x: target.x, y: target.y }, {
       duration, easing: Easing.easeOutQuad,
       onComplete: () => {
+        if (enemy.dying) return;
         if (ctx.player && ctx.player.col === nc && ctx.player.row === nr) {
           ctx.damagePlayer(world);
           enemy.stunTimer = 1.2;
@@ -122,6 +128,7 @@ function moveEnemyBowJump(world: IWorld, ctx: EnemyAIContext, enemy: EnemyState,
               globalTweens.to(transform, { scaleX: 1.0, scaleY: 1.0 }, {
                 duration: ph * 0.2, easing: Easing.easeInQuad,
                 onComplete: () => {
+                  if (enemy.dying) return;
                   if (ctx.player && ctx.player.col === nc && ctx.player.row === nr) {
                     ctx.damagePlayer(world); enemy.stunTimer = 1.2;
                   }

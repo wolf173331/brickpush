@@ -44,7 +44,6 @@ import {
   ENEMY_TEXTURES,
   SCORE_HEART_MERGE,
   SCORE_WALL_BREAK,
-  calcTimeBonusScore,
   READY_DURATION,
   ENEMY_SPAWN_ACTIVATE_DELAY,
   TIME_LIMIT_SECONDS,
@@ -97,6 +96,7 @@ import { updateNpc as _updateNpc, tryPushNpc as _tryPushNpc, type NpcContext } f
 import { multiplayerState } from '../network/MultiplayerState';
 import type { PlayerAction } from '../network/types';
 import { seedRandom, type RandomGenerator } from '../network/DeterministicRandom';
+import { checkAABBCollision, getEntityBounds } from '../utils/aabb';
 
 const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
@@ -117,6 +117,7 @@ export class GameScene extends Scene {
   private npc: NpcState | null = null;
   private enemies: EnemyState[] = [];
   private bombs: BombState[] = [];
+  private movingBlocks: Set<EntityId> = new Set();
 
   // ---- HUD entity references ----
   private hudEntities: HudEntities = {
@@ -449,6 +450,15 @@ export class GameScene extends Scene {
         activateTimer: activate ? 0 : ENEMY_SPAWN_ACTIVATE_DELAY,
         dying: false,
       });
+      // 未激活的敌人添加摇晃出生动画
+      if (!activate) {
+        const t = world.getComponent<TransformComponent>(eid, TRANSFORM_COMPONENT);
+        if (t) {
+          globalTweens.to(t, { rotation: 0.25 }, {
+            duration: 0.12, easing: Easing.easeInOutQuad, yoyo: true, repeat: -1,
+          });
+        }
+      }
     }
   }
 
@@ -567,6 +577,7 @@ export class GameScene extends Scene {
     this.updateHUD(world);
     this.checkComplete(world);
     this.updateIdleAnimations(world, dt);
+    this.checkAABBCollisions(world);
   }
 
   private updateMultiplayer(world: IWorld, dt: number): void {
@@ -680,6 +691,7 @@ export class GameScene extends Scene {
     this.updateNpc(world, dt);
     this.checkComplete(world);
     this.updateIdleAnimations(world, dt);
+    this.checkAABBCollisions(world);
   }
 
   private showDisconnectText(world: IWorld): void {
@@ -930,7 +942,15 @@ export class GameScene extends Scene {
   private destroyWallAt(world: IWorld, c: number, r: number) { destroyWallAt(world, this.blockCtx, c, r); }
   private spawnBreakEffect(world: IWorld, c: number, r: number, color: number) { spawnBreakEffect(world, this.blockCtx, c, r, color); }
   private spawnItemAt(world: IWorld, c: number, r: number, tex: string) { spawnItemAt(world, this.blockCtx, c, r, tex); }
-  private pushBlock(world: IWorld, fC: number, fR: number, tC: number, tR: number, ct: number) { return _pushBlock(world, this.blockCtx, fC, fR, tC, tR, ct); }
+  private pushBlock(world: IWorld, fC: number, fR: number, tC: number, tR: number, ct: number): number {
+    const blockEntity = this.entityMap.get(gridKey(fC, fR));
+    const duration = _pushBlock(world, this.blockCtx, fC, fR, tC, tR, ct);
+    if (blockEntity !== undefined && duration > 0) {
+      this.movingBlocks.add(blockEntity);
+      setTimeout(() => this.movingBlocks.delete(blockEntity), Math.round(duration * 1000));
+    }
+    return duration;
+  }
   private pushBombUntilCollision(world: IWorld, p: PlayerState, bC: number, bR: number, dc: number, dr: number) {
     _pushBombUntilCollision(world, this.blockCtx, p, bC, bR, dc, dr, (w, pl, tc, tr) => this.movePlayerTo(w, pl, tc, tr));
   }
@@ -1055,12 +1075,12 @@ export class GameScene extends Scene {
         easing: Easing.easeOutQuad,
         onComplete: () => {
           globalTweens.to(transform, { scaleX: 1.8, scaleY: 0.25 }, {
-            duration: 0.1,
+            duration: 0.08,
             easing: Easing.easeOutQuad,
             onComplete: () => {
               if (sprite) {
                 globalTweens.to(sprite, { alpha: 0 }, {
-                  duration: 0.35,
+                  duration: 0.18,
                   easing: Easing.easeInQuad,
                   onComplete: () => {
                     world.destroyEntity(enemy.entity);
@@ -1284,8 +1304,7 @@ export class GameScene extends Scene {
     if (this.checkHeartsConnected()) {
       this.phase = 'complete';
       this.victoryType = 'hearts';
-      const totalTime = getLevelTimeLimit(this.currentLevelIndex, Math.max(LEVELS.length, 1));
-      const timeBonus = calcTimeBonusScore(this.timeLeft, totalTime);
+      const timeBonus = Math.floor(this.timeLeft * 100);
       if (this.player) this.player.score += SCORE_HEART_MERGE + levelClearBonus + timeBonus;
       if (timeBonus > 0) this.spawnScorePopup(world, 7, 5, timeBonus, 0x00ffcc, `⏱ TIME +${timeBonus}`);
       this.syncRunProgress();
@@ -1460,6 +1479,111 @@ export class GameScene extends Scene {
   public resetPushDistance(): void {
     if (this.player) {
       this.player.pushDistance = PLAYER_PUSH_DISTANCE;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // AABB collision detection (action-game style)
+  // Runs every frame after all positions have been updated by tweens
+  // ------------------------------------------------------------------
+  private checkAABBCollisions(world: IWorld): void {
+    const COLLIDER_SIZE = 40; // slightly smaller than TILE_SIZE (48)
+
+    // Helper: get bounds or null
+    const getBounds = (entity: EntityId) => getEntityBounds(world, entity, COLLIDER_SIZE, COLLIDER_SIZE);
+
+    // 1. Player vs active enemies
+    if (this.player && this.player.damageCooldown <= 0) {
+      const pBounds = getBounds(this.player.entity);
+      if (pBounds) {
+        for (const enemy of this.enemies) {
+          if (!enemy.active || enemy.dying) continue;
+          const eBounds = getBounds(enemy.entity);
+          if (eBounds && checkAABBCollision(pBounds, eBounds)) {
+            this.damagePlayer(world);
+            enemy.stunTimer = 1.2;
+            break; // only one damage per frame
+          }
+        }
+      }
+    }
+
+    // 2. Player2 vs active enemies
+    if (this.player2 && this.player2.damageCooldown <= 0) {
+      const p2Bounds = getBounds(this.player2.entity);
+      if (p2Bounds) {
+        for (const enemy of this.enemies) {
+          if (!enemy.active || enemy.dying) continue;
+          const eBounds = getBounds(enemy.entity);
+          if (eBounds && checkAABBCollision(p2Bounds, eBounds)) {
+            this.damagePlayer(world);
+            enemy.stunTimer = 1.2;
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. Moving blocks vs enemies (box crushes enemy)
+    // 反向遍历，避免 crushEnemy splice 数组导致跳过元素
+    for (const blockEntity of this.movingBlocks) {
+      const bBounds = getBounds(blockEntity);
+      if (!bBounds) continue;
+      for (let i = this.enemies.length - 1; i >= 0; i--) {
+        const enemy = this.enemies[i];
+        if (!enemy.active || enemy.dying) continue;
+        const eBounds = getBounds(enemy.entity);
+        if (eBounds && checkAABBCollision(bBounds, eBounds)) {
+          if (this.player) {
+            this.crushEnemy(world, this.player, enemy);
+          } else {
+            // 无玩家计分：快速自毁（与 crushEnemy 保持相同时长）
+            enemy.dying = true;
+            this.enemies.splice(i, 1);
+            const t2 = world.getComponent<TransformComponent>(enemy.entity, TRANSFORM_COMPONENT);
+            const s2 = world.getComponent<SpriteComponent>(enemy.entity, SPRITE_COMPONENT);
+            if (t2) {
+              globalTweens.to(t2, { scaleX: 2.2, scaleY: 0.15 }, {
+                duration: 0.08, easing: Easing.easeOutQuad,
+                onComplete: () => {
+                  globalTweens.to(t2, { scaleX: 1.8, scaleY: 0.25 }, {
+                    duration: 0.08, easing: Easing.easeOutQuad,
+                    onComplete: () => {
+                      if (s2) {
+                        globalTweens.to(s2, { alpha: 0 }, {
+                          duration: 0.18, easing: Easing.easeInQuad,
+                          onComplete: () => world.destroyEntity(enemy.entity),
+                        });
+                      } else {
+                        world.destroyEntity(enemy.entity);
+                      }
+                    },
+                  });
+                },
+              });
+            } else {
+              world.destroyEntity(enemy.entity);
+            }
+          }
+          break; // 一个 block 每帧只压死一个敌人
+        }
+      }
+    }
+
+    // 4. Enemies vs NPC
+    if (this.npc && !this.npc.isInvincible && this.npc.damageCooldown <= 0) {
+      const npcBounds = getBounds(this.npc.entity);
+      if (npcBounds) {
+        for (const enemy of this.enemies) {
+          if (!enemy.active || enemy.dying) continue;
+          const eBounds = getBounds(enemy.entity);
+          if (eBounds && checkAABBCollision(npcBounds, eBounds)) {
+            this.damageNpc(world, this.npc);
+            enemy.stunTimer = 1.2;
+            break;
+          }
+        }
+      }
     }
   }
 }
