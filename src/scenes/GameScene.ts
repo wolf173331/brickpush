@@ -160,9 +160,11 @@ export class GameScene extends Scene {
   private nextWaveTimer = 0;
   private readonly WAVE_INTERVAL = 18;
 
-  // ---- Touch ----
+  // ---- Touch joystick ----
   private touchDir: { dc: number; dr: number } | null = null;
+  private touchActive = false;
   private touchHandlers: Array<{ evt: string; fn: () => void }> = [];
+  private touchCleanup: (() => void) | null = null;
 
   // ---- Victory UI entities ----
   private victoryUIEntities: EntityId[] = [];
@@ -233,7 +235,7 @@ export class GameScene extends Scene {
     this.createEntitiesFromGrid(world);
     this.createHUD(world);
     this.createReadyOverlay(world);
-    this.createTouchControls(world);
+    this.setupTouchJoystick();
 
     if (this.isMultiplayer) {
       this.lockstepAccumulator = 0;
@@ -273,6 +275,7 @@ export class GameScene extends Scene {
     this.victoryType = 'none';
     this.timeLeft = TIME_LIMIT_SECONDS;
     this.touchDir = null;
+    this.touchActive = false;
     this.touchHandlers = [];
     this.victoryUIEntities = [];
     this.comboCount = 0;
@@ -484,32 +487,92 @@ export class GameScene extends Scene {
   }
 
   // ------------------------------------------------------------------
-  // Touch controls
   // ------------------------------------------------------------------
-  private createTouchControls(world: IWorld): void {
+  // Touch joystick — 屏幕任意位置按下即可拖动控制方向
+  // ------------------------------------------------------------------
+  private setupTouchJoystick(): void {
     const screen = getScreenCategory(W, H);
     if (screen.category === 'desktop' || screen.category === 'large') return;
 
-    const BTN = 80;
-    const dirs = [
-      { label: '▲', x: BTN + 10, y: -(BTN * 2 + 20), dc: 0, dr: -1 },
-      { label: '▼', x: BTN + 10, y: -20, dc: 0, dr: 1 },
-      { label: '◀', x: 10, y: -(BTN + 20), dc: -1, dr: 0 },
-      { label: '▶', x: BTN * 2 + 10, y: -(BTN + 20), dc: 1, dr: 0 },
-    ];
+    const container = document.getElementById('game-container');
+    if (!container) return;
 
-    for (const d of dirs) {
-      const evtName = `touch:dir:${d.dc}:${d.dr}`;
-      this.trackEntity(
-        UIEntityBuilder.create(world, W, H)
-          .withUITransform({ anchor: 'bottom-left', x: d.x, y: d.y, width: BTN, height: BTN, alpha: 0.5 })
-          .withButton({ label: d.label, onClick: evtName, borderRadius: 8 })
-          .build()
-      );
-      const handler = () => { this.touchDir = { dc: d.dc, dr: d.dr }; };
-      globalEventBus.on(evtName, handler);
-      this.touchHandlers.push({ evt: evtName, fn: handler });
-    }
+    // 创建摇杆视觉元素
+    const base = document.createElement('div');
+    base.style.cssText = 'position:fixed;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.25);pointer-events:none;display:none;z-index:100;';
+    const stick = document.createElement('div');
+    stick.style.cssText = 'position:absolute;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.35);top:30px;left:30px;pointer-events:none;transition:none;';
+    base.appendChild(stick);
+    document.body.appendChild(base);
+
+    let touchId: number | null = null;
+    let startX = 0;
+    let startY = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (touchId !== null) return;
+      const touch = e.changedTouches[0];
+      touchId = touch.identifier;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      this.touchActive = true;
+
+      base.style.display = 'block';
+      base.style.left = (startX - 50) + 'px';
+      base.style.top = (startY - 50) + 'px';
+      stick.style.transform = 'translate(0px, 0px)';
+      e.preventDefault();
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!this.touchActive || touchId === null) return;
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier !== touchId) continue;
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const maxDist = 30;
+        const clampedDist = Math.min(dist, maxDist);
+        const angle = Math.atan2(dy, dx);
+
+        stick.style.transform = `translate(${Math.cos(angle) * clampedDist}px, ${Math.sin(angle) * clampedDist}px)`;
+
+        if (dist > 12) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            this.touchDir = { dc: dx > 0 ? 1 : -1, dr: 0 };
+          } else {
+            this.touchDir = { dc: 0, dr: dy > 0 ? 1 : -1 };
+          }
+        } else {
+          this.touchDir = null;
+        }
+        e.preventDefault();
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier === touchId) {
+          touchId = null;
+          this.touchActive = false;
+          this.touchDir = null;
+          base.style.display = 'none';
+        }
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd);
+    container.addEventListener('touchcancel', onTouchEnd);
+
+    this.touchCleanup = () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('touchcancel', onTouchEnd);
+      base.remove();
+    };
   }
 
   // ------------------------------------------------------------------
@@ -644,8 +707,8 @@ export class GameScene extends Scene {
       else if (input.isKeyDown(KEYS.RIGHT)) dc = 1;
     }
 
-    if (dc === 0 && dr === 0 && this.touchDir) {
-      dc = this.touchDir.dc; dr = this.touchDir.dr; this.touchDir = null;
+    if (dc === 0 && dr === 0 && this.touchDir && this.touchActive) {
+      dc = this.touchDir.dc; dr = this.touchDir.dr;
     }
 
     if (dc !== 0 || dr !== 0) {
@@ -750,10 +813,9 @@ export class GameScene extends Scene {
     else if (input.isKeyDown(KEYS.A) || input.isKeyDown(KEYS.LEFT)) dc = -1;
     else if (input.isKeyDown(KEYS.D) || input.isKeyDown(KEYS.RIGHT)) dc = 1;
 
-    if (dc === 0 && dr === 0 && this.touchDir) {
+    if (dc === 0 && dr === 0 && this.touchDir && this.touchActive) {
       dc = this.touchDir.dc;
       dr = this.touchDir.dr;
-      this.touchDir = null;
     }
 
     if (dc !== 0 || dr !== 0) {
@@ -1387,7 +1449,7 @@ export class GameScene extends Scene {
     this.createEntitiesFromGrid(world);
     this.createHUD(world);
     this.createReadyOverlay(world);
-    this.createTouchControls(world);
+    this.setupTouchJoystick();
     this.phase = 'ready';
     this.readyTimer = READY_DURATION;
     this.completionHandled = false;
@@ -1456,6 +1518,11 @@ export class GameScene extends Scene {
     this.timeLeft = TIME_LIMIT_SECONDS;
     this.completionHandled = false;
     this.touchDir = null;
+    this.touchActive = false;
+    if (this.touchCleanup) {
+      this.touchCleanup();
+      this.touchCleanup = null;
+    }
     if (this.isMultiplayer) {
       multiplayerState.cleanup();
     }
